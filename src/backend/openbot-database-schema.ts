@@ -17,6 +17,7 @@ import { AGENT_WAIT_SCHEMA_SQL } from "./agent-waits/agent-wait-schema";
 import { BROWSER_PROFILE_SCHEMA_SQL } from "./browser-profiles/browser-profile-schema";
 import { BROWSER_PROXY_SCHEMA_SQL } from "./browser-profiles/browser-proxy-schema";
 import { CHANNEL_SCHEMA_SQL, CHANNEL_SETTINGS_SCHEMA_SQL } from "./channel-schema";
+import { CONTENT_SCHEMA_SQL } from "./content/content-schema";
 import { AGENT_SKILL_LOADS_SCHEMA_SQL } from "./database/agent-skill-loads-schema";
 import { DELETED_THREAD_MESSAGES_SCHEMA_SQL } from "./database/deleted-thread-messages-schema";
 import { PROVIDER_HISTORY_SCHEMA_SQL } from "./database/provider-history-schema";
@@ -633,7 +634,8 @@ const LATEST_SCHEMA_SQL =
   DELETED_THREAD_MESSAGES_SCHEMA_SQL +
   BROWSER_PROXY_SCHEMA_SQL +
   AGENT_SKILL_LOADS_SCHEMA_SQL +
-  MESSAGING_PINGS_SCHEMA_SQL;
+  MESSAGING_PINGS_SCHEMA_SQL +
+  CONTENT_SCHEMA_SQL;
 
 /** The end of the thread message table with the migration 40 columns before its PRIMARY KEY constraint. */
 function withThreadMessageOrderColumns(tableEnd: string): string {
@@ -987,6 +989,12 @@ const MIGRATIONS: readonly OpenBotMigration[] = [
     // Only creates a table, so no foreign-key pause and no vacuum. No post was recorded as a ping
     // before it, so the table starts empty, and every thread routes its replies as before.
     up: (db) => db.exec(MESSAGING_PINGS_SCHEMA_SQL),
+  },
+  {
+    version: 60,
+    // Only creates tables and their indexes, so no foreign-key pause and no vacuum. No post or account
+    // existed before it, so the tables start empty and no other row changes.
+    up: (db) => db.exec(CONTENT_SCHEMA_SQL),
   },
 ];
 
