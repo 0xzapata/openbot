@@ -11,7 +11,13 @@
 
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { type ContentMedia, type ContentPlatform, contentVariantIssues } from "@openbot/contracts/ipc-content";
+import {
+  type ContentMedia,
+  type ContentPlatform,
+  type ContentVariantIssue,
+  contentVariantIssues,
+} from "@openbot/contracts/ipc-content";
+import { sourceText } from "@openbot/i18n/source";
 import { createOpenBotLogger } from "@openbot/logging";
 import { Effect } from "effect";
 import { z } from "zod";
@@ -23,7 +29,7 @@ import {
   type DueContentVariant,
 } from "../../backend/content/content-store";
 import type { RoutineDueSource } from "../../backend/routine-timer";
-import { CONTENT_REFRESH_MARGIN_MS, type ContentAccounts } from "./content-accounts";
+import { CONTENT_REFRESH_MARGIN_MS, type ContentAccounts, signInAgain } from "./content-accounts";
 import { ContentAdapterError, type ContentPublishMedia, type ContentPublishResult } from "./content-adapter";
 
 const logger = createOpenBotLogger("content-publisher");
@@ -31,13 +37,13 @@ const logger = createOpenBotLogger("content-publisher");
 const PASS_LIMIT = 10;
 
 const ISSUE_TEXT = {
-  "over-limit": "The text or the title is too long for this network.",
-  "needs-image": "This network needs an image.",
-  "needs-video": "This network needs a video.",
-  "needs-title": "This network needs a title.",
-  "images-only": "This network takes only images.",
-  "video-only": "This network takes only a video.",
-} as const;
+  "over-limit": () => sourceText("error.content.issueOverLimit"),
+  "needs-image": () => sourceText("error.content.issueNeedsImage"),
+  "needs-video": () => sourceText("error.content.issueNeedsVideo"),
+  "needs-title": () => sourceText("error.content.issueNeedsTitle"),
+  "images-only": () => sourceText("error.content.issueImagesOnly"),
+  "video-only": () => sourceText("error.content.issueVideoOnly"),
+} as const satisfies Record<ContentVariantIssue, () => string>;
 
 export interface ContentPublisherOptions {
   store: ContentStore;
@@ -85,7 +91,9 @@ export class ContentPublisher implements RoutineDueSource {
               this.#finish(item.variant.id, {
                 kind: "failed",
                 code: "unknown-result",
-                message: `OpenBot could not finish this post. Check ${CONTENT_NETWORK_NAMES[item.variant.platform]} before you retry.`,
+                message: sourceText("error.content.notFinished", {
+                  network: CONTENT_NETWORK_NAMES[item.variant.platform],
+                }),
               });
             } catch {
               // The database refused: the startup recovery ends the variant.
@@ -125,7 +133,7 @@ export class ContentPublisher implements RoutineDueSource {
       return this.#finish(variant.id, {
         kind: "failed",
         code: "invalid",
-        message: issues.map((issue) => ISSUE_TEXT[issue]).join(" "),
+        message: issues.map((issue) => ISSUE_TEXT[issue]()).join(" "),
       });
 
     const file = media ? yield* this.#readMedia(media) : null;
@@ -133,7 +141,7 @@ export class ContentPublisher implements RoutineDueSource {
       return this.#finish(variant.id, {
         kind: "failed",
         code: "invalid",
-        message: "OpenBot could not read the media file of this post.",
+        message: sourceText("error.content.mediaUnreadable"),
       });
     // Decision B: a network with no connected account fails when its time comes.
     if (!account) return this.#finish(variant.id, signedOut(platform));
@@ -172,11 +180,7 @@ export class ContentPublisher implements RoutineDueSource {
       : Effect.try({
           try: () => this.#accounts.accessToken(account),
           catch: () =>
-            new ContentAdapterError({
-              code: "signed-out",
-              status: null,
-              message: `Sign in to ${CONTENT_NETWORK_NAMES[account.platform]} again.`,
-            }),
+            new ContentAdapterError({ code: "signed-out", status: null, message: signInAgain(account.platform) }),
         }).pipe(Effect.flatMap(request));
     return first.pipe(
       Effect.catchIf(
@@ -222,9 +226,8 @@ export class ContentPublisher implements RoutineDueSource {
   });
 }
 
-function signedOut(platform: ContentPlatform): ContentVariantOutcome {
-  const name = CONTENT_NETWORK_NAMES[platform];
-  return { kind: "failed", code: "signed-out", message: `Sign in to ${name} again.` };
+function signedOut(platform: ContentPlatform): Extract<ContentVariantOutcome, { kind: "failed" }> {
+  return { kind: "failed", code: "signed-out", message: signInAgain(platform) };
 }
 
 const storedPendingSchema = z.object({ checkAt: z.string(), data: z.string() });

@@ -5,6 +5,7 @@
  */
 
 import { isDynamicRecord } from "@openbot/contracts/runtime-values";
+import { sourceText } from "@openbot/i18n/source";
 import { Effect } from "effect";
 import { z } from "zod";
 import {
@@ -79,7 +80,7 @@ export class LinkedInAdapter implements ContentAdapter {
       return yield* new ContentAdapterError({
         code: "rejected",
         status: null,
-        message: "LinkedIn needs the client secret of the app.",
+        message: sourceText("error.content.needsSecret", { network: NETWORK }),
       });
     const tokens = yield* this.#token({
       grant_type: "authorization_code",
@@ -98,7 +99,7 @@ export class LinkedInAdapter implements ContentAdapter {
       return yield* new ContentAdapterError({
         code: "server",
         status: response.status,
-        message: "LinkedIn sent no profile.",
+        message: sourceText("error.content.noProfile", { network: NETWORK }),
       });
     const name = typeof body.name === "string" && body.name ? body.name : null;
     return { tokens, profile: { externalAccountId: body.sub, handle: name ?? body.sub, displayName: name } };
@@ -112,7 +113,7 @@ export class LinkedInAdapter implements ContentAdapter {
       return yield* new ContentAdapterError({
         code: "signed-out",
         status: null,
-        message: "Sign in to LinkedIn again.",
+        message: sourceText("error.content.signInAgainLinkedIn"),
       });
     return yield* this.#token({
       grant_type: "refresh_token",
@@ -137,7 +138,7 @@ export class LinkedInAdapter implements ContentAdapter {
       return yield* new ContentAdapterError({
         code: "rejected",
         status: null,
-        message: "LinkedIn takes only JPEG, PNG or GIF images. Use another image for LinkedIn.",
+        message: sourceText("error.content.linkedInImageType"),
       });
     const init = yield* contentRequest(this.#options, NETWORK, `${IMAGES_URL}?action=initializeUpload`, {
       method: "POST",
@@ -151,7 +152,7 @@ export class LinkedInAdapter implements ContentAdapter {
       return yield* new ContentAdapterError({
         code: "server",
         status: init.status,
-        message: "LinkedIn sent no upload address.",
+        message: sourceText("error.content.noUploadAddress", { network: NETWORK }),
       });
     const upload = yield* contentRequest(this.#options, NETWORK, value.uploadUrl, {
       method: "PUT",
@@ -182,7 +183,7 @@ export class LinkedInAdapter implements ContentAdapter {
       return yield* new ContentAdapterError({
         code: "rejected",
         status: null,
-        message: "The LinkedIn upload state is not valid.",
+        message: sourceText("error.content.uploadStateInvalid", { network: NETWORK }),
       });
     if (!(yield* this.#imageAvailable(input.accessToken, pending.image))) {
       const again: ContentPublishResult = {
@@ -210,7 +211,7 @@ export class LinkedInAdapter implements ContentAdapter {
       return yield* new ContentAdapterError({
         code: "rejected",
         status: null,
-        message: "LinkedIn could not process the image.",
+        message: sourceText("error.content.imageFailed", { network: NETWORK }),
       });
     return status === "AVAILABLE";
   });
@@ -242,7 +243,7 @@ export class LinkedInAdapter implements ContentAdapter {
       return yield* new ContentAdapterError({
         code: "unknown-result",
         status: response.status,
-        message: "LinkedIn sent no post id. Check LinkedIn before you retry.",
+        message: sourceText("error.content.noPostId", { network: NETWORK }),
       });
     const result: ContentPublishResult = {
       kind: "published",
@@ -298,12 +299,15 @@ function linkedInError(
   const text = shortProviderText(record.message) ?? shortProviderText(record.error_description);
   const fail = (code: ContentAdapterError["code"], message: string) =>
     Effect.fail(new ContentAdapterError({ code, status, message }));
-  if (status === 401 || (tokenRequest && status === 400)) return fail("signed-out", "Sign in to LinkedIn again.");
-  if (status === 409) return fail("rejected", "LinkedIn says this post already exists.");
-  if (status === 426) return fail("rejected", "The LinkedIn API version is too old. Update OpenBot.");
-  if (status === 429) return fail("rate-limited", "LinkedIn limits the posts now. Try again later.");
-  if (status >= 500) return fail("server", `LinkedIn had a server error (${status}).`);
+  const network = NETWORK;
+  if (status === 401 || (tokenRequest && status === 400))
+    return fail("signed-out", sourceText("error.content.signInAgainLinkedIn"));
+  if (status === 409) return fail("rejected", sourceText("error.content.duplicate", { network }));
+  if (status === 426) return fail("rejected", sourceText("error.content.apiVersionOld", { network }));
+  if (status === 429) return fail("rate-limited", sourceText("error.content.rateLimitedLater", { network }));
+  if (status >= 500)
+    return fail("server", sourceText("error.content.serverError", { network, status: String(status) }));
   if (status === 403)
-    return fail("rejected", `LinkedIn refused the request. The app may not have the permission: ${text ?? "HTTP 403"}`);
-  return fail("rejected", `LinkedIn refused the post: ${text ?? `HTTP ${status}`}`);
+    return fail("rejected", sourceText("error.content.refusedPermission", { network, reason: text ?? "HTTP 403" }));
+  return fail("rejected", sourceText("error.content.refusedPost", { network, reason: text ?? `HTTP ${status}` }));
 }

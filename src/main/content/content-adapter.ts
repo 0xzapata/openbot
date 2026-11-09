@@ -10,6 +10,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { ContentMediaKind, ContentPlatform } from "@openbot/contracts/ipc-content";
 import { isDynamicRecord } from "@openbot/contracts/runtime-values";
+import { sourceText } from "@openbot/i18n/source";
 import { redactText } from "@openbot/logging";
 import { Effect, Schema } from "effect";
 
@@ -130,9 +131,13 @@ export function contentRequest(
         ? new ContentAdapterError({
             code: "unknown-result",
             status: null,
-            message: `${network} did not answer. The post may exist: check ${network} before you retry.`,
+            message: sourceText("error.content.noAnswer", { network }),
           })
-        : new ContentAdapterError({ code: "network", status: null, message: `${network} could not be reached.` }),
+        : new ContentAdapterError({
+            code: "network",
+            status: null,
+            message: sourceText("error.content.unreachable", { network }),
+          }),
   });
 }
 
@@ -157,7 +162,13 @@ export function formBody(values: Record<string, string>): string {
 /** The tokens of an OAuth token answer. A refresh token in the answer replaces the old one. */
 export function tokensOf(body: unknown, now: Date, network: string): Effect.Effect<ContentTokens, ContentAdapterError> {
   if (!isDynamicRecord(body) || typeof body.access_token !== "string" || !body.access_token)
-    return Effect.fail(new ContentAdapterError({ code: "server", status: null, message: `${network} sent no token.` }));
+    return Effect.fail(
+      new ContentAdapterError({
+        code: "server",
+        status: null,
+        message: sourceText("error.content.noToken", { network }),
+      }),
+    );
   const expiresIn = typeof body.expires_in === "number" && body.expires_in > 0 ? body.expires_in : null;
   return Effect.succeed({
     accessToken: body.access_token,

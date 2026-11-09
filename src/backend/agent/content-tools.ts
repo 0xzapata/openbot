@@ -1,6 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, open, unlink } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { unlink } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
   CONTENT_PLATFORM_KEYS,
@@ -11,12 +10,12 @@ import {
   type ContentVariantIssue,
   contentTextLength,
   contentVariantIssues,
-  detectContentMediaType,
 } from "@openbot/contracts/ipc-content";
 import { Effect, Result } from "effect";
 import { z } from "zod";
 import { attachmentCall } from "../attachment-effects";
 import type { GeneratedAttachmentSource } from "../attachment-files";
+import { copyContentMedia, inspectContentMedia, isContentMediaRefusal } from "../content/content-media";
 import { ContentPendingLimitError, type ContentStore, type ContentVariantInput } from "../content/content-store";
 import type { AttachmentGateway } from "./attachment-gateway";
 import { localTimezone, openBotToolFailure, openBotToolResult } from "./routine-tools";
@@ -25,7 +24,6 @@ import { ToolOperationFailed, toolStep, toToolOperationFailed } from "./tool-ope
 export const CONTENT_CREATE_POST = "content_create_post";
 
 const MB = 1024 * 1024;
-const COPY_CHUNK_BYTES = MB;
 const MEDIA_RULE = `PNG, JPEG, WEBP or GIF images up to ${INPUT_LIMITS.contentImageBytes / MB} MB, MP4 or MOV videos up to ${INPUT_LIMITS.contentVideoBytes / MB / 1024} GB`;
 
 const mediaPath = z.string().trim().min(1).max(INPUT_LIMITS.path);
@@ -129,7 +127,7 @@ export const handleContentTool = Effect.fn("ContentTools.handle")(function* (
     // A sweep that removes files no row names can remove those later.
     const copiedAll = yield* Effect.result(
       Effect.forEach(media, ({ source, record }) =>
-        copyMedia(source, record, join(dependencies.content.mediaRoot, record.file), copied),
+        copyContentMedia(source, record, join(dependencies.content.mediaRoot, record.file), copied),
       ),
     );
     if (Result.isFailure(copiedAll)) {
@@ -188,7 +186,8 @@ function inputRefusal(input: CreatePostInput, now: Date): string | null {
   return null;
 }
 
-function isTimeZone(zone: string): boolean {
+/** An IANA time zone that this runtime knows, such as Europe/Warsaw. */
+export function isTimeZone(zone: string): boolean {
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: zone });
     return true;
@@ -197,55 +196,22 @@ function isTimeZone(zone: string): boolean {
   }
 }
 
-/** The media record of an opened file, or the reason the file cannot be used. */
+/** The media record of an opened file, or the reason the file cannot be used, in English for the model. */
 const inspectMedia = Effect.fn("ContentTools.inspectMedia")(function* (
   source: GeneratedAttachmentSource,
   request: MediaRequest,
 ) {
-  const { size } = yield* attachmentCall(() => source.handle.stat()).pipe(toToolOperationFailed);
-  const head = new Uint8Array(16);
-  const { bytesRead } = yield* attachmentCall(() => source.handle.read(head, 0, head.length, 0)).pipe(
-    toToolOperationFailed,
-  );
-  const type = detectContentMediaType(head.subarray(0, bytesRead));
-  if (!type) return `The file is not a supported image or video. Use ${MEDIA_RULE}.`;
-  const limit = type.kind === "image" ? INPUT_LIMITS.contentImageBytes : INPUT_LIMITS.contentVideoBytes;
-  if (size > limit) return `The ${type.kind} is larger than ${limit / MB} MB.`;
-  if (request.owner !== null && type.kind !== CONTENT_PLATFORMS[request.owner].media)
-    return `${request.owner} takes ${CONTENT_PLATFORMS[request.owner].media === "image" ? "an image" : "a video"}, not ${type.kind === "image" ? "an image" : "a video"}.`;
-  const id = randomUUID();
-  return {
-    id,
-    kind: type.kind,
-    mimeType: type.mimeType,
-    bytes: size,
-    name: basename(source.path),
-    file: `${id}.${type.extension}`,
-  } satisfies ContentMedia;
+  const checked = yield* inspectContentMedia(source, basename(source.path), request.owner).pipe(toToolOperationFailed);
+  if (!isContentMediaRefusal(checked)) return checked;
+  switch (checked.refusal) {
+    case "type":
+      return `The file is not a supported image or video. Use ${MEDIA_RULE}.`;
+    case "size":
+      return `The ${checked.kind} is larger than ${checked.limitMb} MB.`;
+    case "kind":
+      return `${checked.platform} takes ${checked.expected === "image" ? "an image, not a video" : "a video, not an image"}.`;
+  }
 });
-
-/** Copies the opened file to a new file that only this call creates, and records it in `copied` first. */
-function copyMedia(source: GeneratedAttachmentSource, record: ContentMedia, target: string, copied: string[]) {
-  return attachmentCall(async () => {
-    await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-    const output = await open(target, "wx", 0o600);
-    copied.push(target);
-    try {
-      // A loop, not a stream: the caller owns and closes the source handle.
-      const buffer = Buffer.allocUnsafe(COPY_CHUNK_BYTES);
-      let position = 0;
-      for (;;) {
-        const { bytesRead } = await source.handle.read(buffer, 0, buffer.length, position);
-        if (bytesRead === 0) break;
-        await output.write(buffer, 0, bytesRead);
-        position += bytesRead;
-      }
-      if (position !== record.bytes) throw new Error("The file changed while OpenBot copied it.");
-    } finally {
-      await output.close();
-    }
-  });
-}
 
 function causeMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);

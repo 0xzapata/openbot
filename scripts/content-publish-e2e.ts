@@ -734,18 +734,25 @@ try {
 
   let interruptedPostId = "";
 
+  // Decision A as updated in step 3a: unschedule removes the time (NULL), and unskip gives `queued` only
+  // when another network of the post is queued, so a queued variant always belongs to a live schedule.
   await step("8. Decision A: unschedule, skip and unskip; refused while publishing or published", async () => {
+    const live = queuedPost({ body: "Live plan check" });
+    content.setVariantSkipped(live.id, "x", true, clock);
+    assert.equal(variantOf(live.id, "x").status, "skipped", "A queued network can be skipped.");
+    content.setVariantSkipped(live.id, "x", false, clock);
+    assert.equal(variantOf(live.id, "x").status, "queued", "Another network is queued, so it queues again.");
+
     const post = queuedPost({ body: "Plan check" });
     content.unschedulePost(post.id, clock);
     const after = content.readPost(post.id);
-    assert.equal(after?.scheduledFor, post.time.toISOString(), "The time stays as the plan.");
+    assert.equal(after?.scheduledFor, null, "The user removed the time.");
     assert.deepEqual(new Set(Object.values(statuses(post.id))), new Set(["draft"]));
     content.setVariantSkipped(post.id, "x", true, clock);
     assert.equal(variantOf(post.id, "x").status, "skipped");
     content.setVariantSkipped(post.id, "x", false, clock);
-    assert.equal(variantOf(post.id, "x").status, "queued", "An approved-or-none post with a time queues again.");
-    content.setVariantSkipped(post.id, "x", true, clock);
-    assert.equal(variantOf(post.id, "x").status, "skipped", "A queued network can be skipped.");
+    assert.equal(variantOf(post.id, "x").status, "draft", "No other network is queued, so it is a draft.");
+    assert.equal(content.readPost(post.id)?.scheduledFor, null, "An unskip does not bring the time back.");
     const pending = content.createPost(
       {
         body: "Pending plan",

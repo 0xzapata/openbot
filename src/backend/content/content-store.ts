@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
@@ -7,6 +8,7 @@ import {
   CONTENT_PLATFORM_KEYS,
   CONTENT_VARIANT_STATUSES,
   type ContentApprovalState,
+  type ContentChangedEvent,
   type ContentMedia,
   type ContentPlatform,
   type ContentPost,
@@ -15,6 +17,7 @@ import {
   isContentPlatform,
 } from "@openbot/contracts/ipc-content";
 import type { DynamicRecord } from "@openbot/contracts/runtime-values";
+import { sourceText } from "@openbot/i18n/source";
 import {
   checkedColumn,
   databaseRow,
@@ -89,7 +92,24 @@ export interface ContentPostInput {
   variants: Partial<Record<ContentPlatform, ContentVariantInput>>;
 }
 
-/** The user action does not fit the state of the post. The message is for the user. */
+/** The own values of one variant that an edit changes. An absent field stays as it is. */
+export interface ContentVariantEdit {
+  platform: ContentPlatform;
+  body?: string | null;
+  title?: string | null;
+  media?: ContentMedia | null;
+  skipped?: boolean;
+}
+
+/** What the user changes in a post. An absent field stays as it is. */
+export interface ContentPostEdit {
+  body?: string;
+  media?: ContentMedia | null;
+  timezone?: string;
+  variants?: ContentVariantEdit[];
+}
+
+/** The user action does not fit the state of the post. The message is `sourceText` English. */
 export class ContentStateError extends Error {}
 
 /** The agent already has the most pending posts that it can have. */
@@ -109,11 +129,20 @@ export class ContentPendingLimitError extends Error {
 export class ContentStore {
   readonly #database: OpenBotDatabase;
   readonly #queued: () => void;
+  readonly #changed: (event: ContentChangedEvent) => void;
 
-  /** `queued` runs after a user write that queues a variant, so the routine timer plans the new time. */
-  constructor(database: OpenBotDatabase, queued: () => void = () => {}) {
+  /**
+   * `queued` runs after a user write that queues a variant, so the routine timer plans the new time.
+   * `changed` runs once after each write that commits, so main can tell the windows.
+   */
+  constructor(
+    database: OpenBotDatabase,
+    queued: () => void = () => {},
+    changed: (event: ContentChangedEvent) => void = () => {},
+  ) {
     this.#database = database;
     this.#queued = queued;
+    this.#changed = changed;
   }
 
   /** The folder of the media files. A media record names only a file in it. */
@@ -121,11 +150,15 @@ export class ContentStore {
     return join(this.#database.userDataPath, "content-media");
   }
 
-  /** Writes the post and one variant for each of the six platforms in one transaction. */
+  /**
+   * Writes the post and one variant for each of the six platforms in one transaction. A post that needs no
+   * approval and has a time is queued at once.
+   */
   createPost(input: ContentPostInput, now = new Date()): ContentPost {
     const postId = randomUUID();
     const createdAt = now.toISOString();
-    return this.#database.dispatch(
+    const queue = input.approvalState === "none" && input.scheduledFor !== null;
+    const post = this.#database.dispatch(
       `content:create-post:${postId}`,
       [{ aggregateType: "content-post", aggregateId: postId, eventType: "content-post.created", payload: input }],
       (db, sequences) => {
@@ -169,7 +202,7 @@ export class ContentStore {
             variant?.body ?? null,
             variant?.title ?? null,
             mediaJson(variant?.media ?? null),
-            variant?.status ?? "draft",
+            variant?.status === "skipped" ? "skipped" : queue ? "queued" : "draft",
             createdAt,
             createdAt,
             sequence,
@@ -180,6 +213,150 @@ export class ContentStore {
         return post;
       },
     );
+    this.#changed({ postId });
+    if (queue) this.#queued();
+    return post;
+  }
+
+  /**
+   * The posts whose time, or creation time when they have none, is in `[from, to)`, newest first.
+   * ponytail: posts with the same time at a page edge can be skipped; add a cursor when the screen pages.
+   */
+  listPosts(range: { from: string | null; to: string | null; limit: number }): ContentPost[] {
+    const rows = databaseRows(
+      this.#database.connection
+        .prepare(
+          `SELECT post_id FROM content_posts
+           WHERE (? IS NULL OR COALESCE(scheduled_for, created_at) >= ?) AND (? IS NULL OR COALESCE(scheduled_for, created_at) < ?)
+           ORDER BY COALESCE(scheduled_for, created_at) DESC, post_id DESC LIMIT ?`,
+        )
+        .all(range.from, range.from, range.to, range.to, range.limit),
+    );
+    return this.#readPosts(rows);
+  }
+
+  /** The posts whose time is in `[from, to)`, oldest first. */
+  calendar(range: { from: string; to: string }): ContentPost[] {
+    const rows = databaseRows(
+      this.#database.connection
+        .prepare(
+          `SELECT post_id FROM content_posts WHERE scheduled_for >= ? AND scheduled_for < ?
+           ORDER BY scheduled_for, post_id`,
+        )
+        .all(range.from, range.to),
+    );
+    return this.#readPosts(rows);
+  }
+
+  #readPosts(rows: DynamicRecord[]): ContentPost[] {
+    return rows.flatMap((row) => this.readPost(requiredStringColumn(row, "post_id")) ?? []);
+  }
+
+  /**
+   * Changes the text, media, time zone and skipped networks of a post. A pending post stays pending and a
+   * queued network stays queued. Refused while a network posts it or has it. A media file that no post
+   * names after the edit is removed.
+   */
+  editPost(postId: string, edit: ContentPostEdit, now = new Date()): ContentPost {
+    const replaced: string[] = [];
+    let unskippedToQueue = false;
+    const result = this.#postWrite(postId, "content-post.edited", { postId }, (post, db, sequence) => {
+      refuseSentPost(post);
+      const time = now.toISOString();
+      if (edit.media !== undefined && post.media && post.media.file !== edit.media?.file)
+        replaced.push(post.media.file);
+      db.prepare(
+        `UPDATE content_posts SET body = ?, media_json = ?, timezone = ?, updated_at = ?, last_event_sequence = ?
+         WHERE post_id = ?`,
+      ).run(
+        edit.body ?? post.body,
+        mediaJson(edit.media === undefined ? post.media : edit.media),
+        edit.timezone ?? post.timezone,
+        time,
+        sequence,
+        postId,
+      );
+      const statuses = new Map(post.variants.map((variant) => [variant.platform, variant.status]));
+      const changes = edit.variants ?? [];
+      // Skips first, so a network taken back in the same edit sees the other networks as they will be.
+      for (const change of changes) {
+        if (change.skipped !== true) continue;
+        const status = statuses.get(change.platform);
+        if (status === "skipped") continue;
+        if (status !== "draft" && status !== "queued")
+          throw new ContentStateError(sourceText("error.content.skipOnlyDraft"));
+        statuses.set(change.platform, "skipped");
+      }
+      for (const change of changes) {
+        if (change.skipped !== false || statuses.get(change.platform) !== "skipped") continue;
+        const next = unskipStatus(statuses, change.platform);
+        if (next === "queued") unskippedToQueue = true;
+        statuses.set(change.platform, next);
+      }
+      const update = db.prepare(
+        `UPDATE content_variants SET body = ?, title = ?, media_json = ?, status = ?, updated_at = ?,
+           last_event_sequence = ? WHERE variant_id = ?`,
+      );
+      for (const variant of post.variants) {
+        const change = changes.find((candidate) => candidate.platform === variant.platform);
+        const status = statuses.get(variant.platform) ?? variant.status;
+        if (!change && status === variant.status) continue;
+        if (change?.media !== undefined && variant.media && variant.media.file !== change.media?.file)
+          replaced.push(variant.media.file);
+        update.run(
+          change?.body === undefined ? variant.body : change.body,
+          change?.title === undefined ? variant.title : change.title,
+          mediaJson(change?.media === undefined ? variant.media : change.media),
+          status,
+          time,
+          sequence,
+          variant.id,
+        );
+      }
+    });
+    this.#removeUnreferencedMedia(replaced);
+    if (unskippedToQueue) this.#queued();
+    return result;
+  }
+
+  /**
+   * Deletes the post and its variants, and then the media files that no other post or variant names.
+   * Refused while a network posts it: the request may still need its file.
+   */
+  deletePost(postId: string): void {
+    let files: string[] = [];
+    this.#database.dispatch(
+      `content:content-post.deleted:${randomUUID()}`,
+      [{ aggregateType: "content-post", aggregateId: postId, eventType: "content-post.deleted", payload: { postId } }],
+      (db) => {
+        const post = this.readPost(postId);
+        if (!post) throw new ContentStateError(sourceText("error.content.unknownPost"));
+        if (post.variants.some((variant) => variant.status === "publishing"))
+          throw new ContentStateError(sourceText("error.content.publishing"));
+        files = [post.media, ...post.variants.map((variant) => variant.media)].flatMap((media) =>
+          media ? [media.file] : [],
+        );
+        db.prepare("DELETE FROM content_posts WHERE post_id = ?").run(postId);
+      },
+    );
+    this.#removeUnreferencedMedia(files);
+    this.#changed({ postId });
+  }
+
+  /** After the commit. A file that cannot be removed stays; no row names it. */
+  #removeUnreferencedMedia(files: readonly string[]): void {
+    const named = this.#database.connection.prepare(
+      `SELECT 1 FROM content_posts WHERE json_extract(media_json, '$.file') = ?
+       UNION ALL SELECT 1 FROM content_variants WHERE json_extract(media_json, '$.file') = ? LIMIT 1`,
+    );
+    for (const file of new Set(files)) {
+      if (named.get(file, file)) continue;
+      try {
+        unlinkSync(join(this.mediaRoot, file));
+      } catch {
+        // ponytail: an orphan file stays in content-media; a sweep of files that no row names can remove it.
+      }
+    }
   }
 
   readPost(postId: string): ContentPost | null {
@@ -209,7 +386,7 @@ export class ContentStore {
   /** The user approves a pending post. A post with a future time is queued at once. */
   approvePost(postId: string, now = new Date()): ContentPost {
     const result = this.#postWrite(postId, "content-post.approved", { postId }, (post, db, sequence) => {
-      if (post.approvalState !== "pending") throw new ContentStateError("This post does not wait for approval.");
+      if (post.approvalState !== "pending") throw new ContentStateError(sourceText("error.content.notPending"));
       db.prepare(
         "UPDATE content_posts SET approval_state = 'approved', updated_at = ?, last_event_sequence = ? WHERE post_id = ?",
       ).run(now.toISOString(), sequence, postId);
@@ -223,7 +400,8 @@ export class ContentStore {
   /** Sets the one time of the post and queues every draft. A pending post must be approved first. */
   schedulePost(postId: string, scheduledFor: string, now = new Date()): ContentPost {
     const time = new Date(scheduledFor);
-    if (Number.isNaN(time.getTime()) || time <= now) throw new ContentStateError("The time must be in the future.");
+    if (Number.isNaN(time.getTime()) || time <= now)
+      throw new ContentStateError(sourceText("error.content.timeInFuture"));
     return this.#queuePost(postId, time.toISOString(), now, "content-post.scheduled");
   }
 
@@ -232,36 +410,43 @@ export class ContentStore {
     return this.#queuePost(postId, now.toISOString(), now, "content-post.publish-requested");
   }
 
-  /** Every queued variant goes back to draft. The time stays as the plan. */
+  /**
+   * Decision A: every queued variant goes back to draft, and the time is removed. The user took the time
+   * away, so a later unskip must not bring it back.
+   */
   unschedulePost(postId: string, now = new Date()): ContentPost {
     return this.#postWrite(postId, "content-post.unscheduled", { postId }, (post, db, sequence) => {
       if (post.variants.some((variant) => variant.status === "publishing"))
-        throw new ContentStateError("OpenBot is posting this now. Wait until it ends.");
+        throw new ContentStateError(sourceText("error.content.publishing"));
+      const time = now.toISOString();
+      db.prepare(
+        "UPDATE content_posts SET scheduled_for = NULL, updated_at = ?, last_event_sequence = ? WHERE post_id = ?",
+      ).run(time, sequence, postId);
       db.prepare(
         "UPDATE content_variants SET status = 'draft', updated_at = ?, last_event_sequence = ? WHERE post_id = ? AND status = 'queued'",
-      ).run(now.toISOString(), sequence, postId);
+      ).run(time, sequence, postId);
     });
   }
 
   /**
-   * Skips one network, or takes it back. A network taken back is queued when the post is approved or
-   * needs no approval and has a time, else it is a draft.
+   * Skips one network, or takes it back. Decision A: a network taken back is queued only when another
+   * network of the post is queued, so a queued variant always belongs to a live schedule; else it is a draft.
    */
   setVariantSkipped(postId: string, platform: ContentPlatform, skipped: boolean, now = new Date()): ContentPost {
     const eventType = skipped ? "content-post.variant-skipped" : "content-post.variant-unskipped";
     const result = this.#postWrite(postId, eventType, { postId, platform }, (post, db, sequence) => {
       const variant = post.variants.find((candidate) => candidate.platform === platform);
-      if (!variant) throw new ContentStateError("This post has no variant for that network.");
+      if (!variant) throw new ContentStateError(sourceText("error.content.noVariant"));
       if (variant.status === "publishing" || variant.status === "published")
-        throw new ContentStateError("This network already has the post, or OpenBot is posting it now.");
+        throw new ContentStateError(sourceText("error.content.variantLocked"));
       let next: ContentVariant["status"];
       if (skipped) {
         if (variant.status !== "draft" && variant.status !== "queued")
-          throw new ContentStateError("Only a draft or a queued network can be skipped.");
+          throw new ContentStateError(sourceText("error.content.skipOnlyDraft"));
         next = "skipped";
       } else {
-        if (variant.status !== "skipped") throw new ContentStateError("This network is not skipped.");
-        next = post.approvalState !== "pending" && post.scheduledFor !== null ? "queued" : "draft";
+        if (variant.status !== "skipped") throw new ContentStateError(sourceText("error.content.notSkipped"));
+        next = unskipStatus(new Map(post.variants.map((other) => [other.platform, other.status])), platform);
       }
       db.prepare(
         "UPDATE content_variants SET status = ?, updated_at = ?, last_event_sequence = ? WHERE variant_id = ?",
@@ -271,7 +456,10 @@ export class ContentStore {
     return result;
   }
 
-  /** Only a user action calls this. The time of the post stays, so the variant is due at once. */
+  /**
+   * Only a user action calls this. The time of the post stays, so the variant is due at once. A post with no
+   * time gets the time now: a queued variant always belongs to a live schedule.
+   */
   retryVariant(postId: string, platform: ContentPlatform, now = new Date()): ContentPost {
     const result = this.#postWrite(
       postId,
@@ -279,7 +467,10 @@ export class ContentStore {
       { postId, platform },
       (post, db, sequence) => {
         const variant = post.variants.find((candidate) => candidate.platform === platform);
-        if (variant?.status !== "failed") throw new ContentStateError("Only a network that failed can be tried again.");
+        if (variant?.status !== "failed") throw new ContentStateError(sourceText("error.content.retryOnlyFailed"));
+        db.prepare(
+          "UPDATE content_posts SET scheduled_for = COALESCE(scheduled_for, ?), updated_at = ?, last_event_sequence = ? WHERE post_id = ?",
+        ).run(now.toISOString(), now.toISOString(), sequence, postId);
         db.prepare(
           `UPDATE content_variants SET status = 'queued', error_code = NULL, error = NULL, updated_at = ?,
            last_event_sequence = ? WHERE variant_id = ?`,
@@ -408,7 +599,7 @@ export class ContentStore {
         {
           kind: "failed",
           code: "unknown-result",
-          message: `OpenBot stopped while it posted. Check ${name} before you retry.`,
+          message: sourceText("error.content.interrupted", { network: name }),
         },
         now,
       );
@@ -421,6 +612,19 @@ export class ContentStore {
     const row = databaseRow(
       this.#database.connection
         .prepare("SELECT * FROM content_accounts WHERE platform = ? AND status = 'connected' ORDER BY updated_at DESC")
+        .get(platform),
+    );
+    return row ? decodeAccount(row) : null;
+  }
+
+  /** The newest account of a network in any status, for the accounts screen. */
+  latestAccount(platform: ContentPlatform): ContentAccountRecord | null {
+    const row = databaseRow(
+      this.#database.connection
+        .prepare(
+          `SELECT * FROM content_accounts WHERE platform = ?
+           ORDER BY CASE status WHEN 'connected' THEN 0 ELSE 1 END, updated_at DESC`,
+        )
         .get(platform),
     );
     return row ? decodeAccount(row) : null;
@@ -466,7 +670,10 @@ export class ContentStore {
         const other = this.connectedAccount(input.platform);
         if (other && other.id !== accountId)
           throw new ContentStateError(
-            `${CONTENT_NETWORK_NAMES[input.platform]} already has a connected account (${other.handle}). Disconnect it first.`,
+            sourceText("error.content.accountTaken", {
+              network: CONTENT_NETWORK_NAMES[input.platform],
+              handle: other.handle,
+            }),
           );
         const time = now.toISOString();
         db.prepare(
@@ -496,6 +703,7 @@ export class ContentStore {
     );
     const saved = this.readAccount(accountId);
     if (!saved) throw new Error("The account was not saved.");
+    this.#changed({ accounts: true });
     return saved;
   }
 
@@ -518,6 +726,7 @@ export class ContentStore {
         accountId,
       );
     });
+    this.#changed({ accounts: true });
   }
 
   /** `expired` after a refused refresh. */
@@ -549,7 +758,7 @@ export class ContentStore {
     write: (db: DatabaseSync, sequence: number) => void,
   ): void {
     const account = this.readAccount(accountId);
-    if (!account) throw new ContentStateError("This account is not known.");
+    if (!account) throw new ContentStateError(sourceText("error.content.unknownAccount"));
     this.#database.dispatch(
       `content:${eventType}:${randomUUID()}`,
       [
@@ -568,11 +777,12 @@ export class ContentStore {
       ],
       (db, sequences) => write(db, sequences[0] ?? 0),
     );
+    this.#changed({ accounts: true });
   }
 
   #queuePost(postId: string, scheduledFor: string, now: Date, eventType: string): ContentPost {
     const result = this.#postWrite(postId, eventType, { postId, scheduledFor }, (post, db, sequence) => {
-      if (post.approvalState === "pending") throw new ContentStateError("Approve this post first.");
+      if (post.approvalState === "pending") throw new ContentStateError(sourceText("error.content.approveFirst"));
       db.prepare(
         "UPDATE content_posts SET scheduled_for = ?, updated_at = ?, last_event_sequence = ? WHERE post_id = ?",
       ).run(scheduledFor, now.toISOString(), sequence, postId);
@@ -595,18 +805,20 @@ export class ContentStore {
     payload: Record<string, string | null>,
     write: (post: ContentPost, db: DatabaseSync, sequence: number) => void,
   ): ContentPost {
-    return this.#database.dispatch(
+    const saved = this.#database.dispatch(
       `content:${eventType}:${randomUUID()}`,
       [{ aggregateType: "content-post", aggregateId: postId, eventType, payload }],
       (db, sequences) => {
         const post = this.readPost(postId);
-        if (!post) throw new ContentStateError("This post is not known.");
+        if (!post) throw new ContentStateError(sourceText("error.content.unknownPost"));
         write(post, db, sequences[0] ?? 0);
         const saved = this.readPost(postId);
         if (!saved) throw new Error("The post was not saved.");
         return saved;
       },
     );
+    this.#changed({ postId });
+    return saved;
   }
 
   /** One publisher write of a variant, with one `content-post` event on the post of the variant. */
@@ -621,14 +833,16 @@ export class ContentStore {
         .prepare("SELECT post_id, platform FROM content_variants WHERE variant_id = ?")
         .get(variantId),
     );
-    if (!row) throw new ContentStateError("This variant is not known.");
+    if (!row) throw new ContentStateError(sourceText("error.content.unknownVariant"));
     const postId = requiredStringColumn(row, "post_id");
     const platform = requiredStringColumn(row, "platform");
-    return this.#database.dispatch(
+    const result = this.#database.dispatch(
       `content:${eventType}:${randomUUID()}`,
       [{ aggregateType: "content-post", aggregateId: postId, eventType, payload: { ...payload, variantId, platform } }],
       (db, sequences) => write(db, sequences[0] ?? 0),
     );
+    this.#changed({ postId });
+    return result;
   }
 
   countPendingPosts(agentId: string): number {
@@ -639,6 +853,22 @@ export class ContentStore {
     );
     return row ? requiredNumberColumn(row, "count") : 0;
   }
+}
+
+/** An edit cannot change a post that a network has, or that OpenBot posts now. */
+function refuseSentPost(post: ContentPost): void {
+  if (post.variants.some((variant) => variant.status === "publishing"))
+    throw new ContentStateError(sourceText("error.content.publishing"));
+  if (post.variants.some((variant) => variant.status === "published"))
+    throw new ContentStateError(sourceText("error.content.published"));
+}
+
+/** Decision A: a network taken back is queued only when another network of the post is queued. */
+function unskipStatus(
+  statuses: ReadonlyMap<ContentPlatform, ContentVariant["status"]>,
+  platform: ContentPlatform,
+): "queued" | "draft" {
+  return [...statuses].some(([other, status]) => other !== platform && status === "queued") ? "queued" : "draft";
 }
 
 /** Thrown inside a claim that found no queued row, so its transaction rolls back. */

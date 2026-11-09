@@ -146,6 +146,9 @@ export const INPUT_LIMITS = {
   contentVideoBytes: 1024 * 1024 * 1024,
   // Posts of one agent that wait for the user's approval, so an agent cannot fill the queue.
   contentPendingPostsPerAgent: 50,
+  // One page of the content list, and the longest calendar range in days.
+  contentPostsPage: 100,
+  contentCalendarDays: 62,
 } as const;
 
 // Active members of one host with no plan and no entitled license of its owner, owner included: the

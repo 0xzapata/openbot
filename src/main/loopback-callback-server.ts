@@ -20,7 +20,7 @@ const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost"]);
 export interface CallbackAnswer {
   status: number;
   /** The catalog key of the page text. */
-  message: Extract<AppTextKey, `error.mcp.redirect${string}`>;
+  message: Extract<AppTextKey, `error.mcp.redirect${string}` | `error.content.redirect${string}`>;
 }
 
 export interface LoopbackCallbackServer {

@@ -1837,6 +1837,22 @@ export class MailboxStore {
       .map((delivery) => delivery.id);
   }
 
+  /**
+   * The checked file of one attachment draft: inside the drafts folder, with its stored size and hash.
+   * Null when the draft is gone or its file changed. Only drafts, never a sent or generated file.
+   */
+  resolveDraftFile = Effect.fn("MailboxStore.resolveDraftFile")(function* (
+    this: MailboxStore,
+    draftId: string,
+  ): Effect.fn.Return<{ path: string; name: string } | null, StoredStateFailure> {
+    const draft = this.#state.drafts.find((candidate) => candidate.id === draftId);
+    if (!draft) return null;
+    const file = yield* this.#files
+      .resolveDraft(draft)
+      .pipe(Effect.mapError(({ cause }) => new StoredStateFailure({ cause })));
+    return file ? { path: file.path, name: file.name } : null;
+  }).bind(this);
+
   /** The file name of an attachment draft, or null when the draft is gone. */
   draftName(draftId: string): string | null {
     return this.#state.drafts.find((draft) => draft.id === draftId)?.name ?? null;

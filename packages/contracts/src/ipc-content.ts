@@ -1,5 +1,5 @@
 import { INPUT_LIMITS } from "./input-limits";
-import { isDynamicRecord, isNumber, isOneOf, isString } from "./runtime-values";
+import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isOneOf, isString } from "./runtime-values";
 
 /** The networks that a post can go to, in the order the composer shows them. */
 export const CONTENT_PLATFORM_KEYS = ["x", "linkedin", "instagram", "threads", "facebook_page", "youtube"] as const;
@@ -201,4 +201,306 @@ export function detectContentMediaType(head: Uint8Array): ContentMediaType | nul
     if (MP4_BRANDS.has(brand)) return { kind: "video", mimeType: "video/mp4", extension: "mp4" };
   }
   return null;
+}
+
+// The `content` IPC group. Every view leaves out tokens, ciphertext, client secrets, stored file names
+// and absolute paths, and the decoders refuse a value with a key that the view does not name.
+
+/** A media file as the renderer sees it: the stored file name stays in main. */
+export type ContentMediaView = Omit<ContentMedia, "file">;
+
+export type ContentVariantView = Omit<ContentVariant, "media"> & { media: ContentMediaView | null };
+
+export type ContentPostView = Omit<ContentPost, "media" | "variants"> & {
+  /** Derived in main with `contentPostStatus`. */
+  status: ContentPostStatus;
+  media: ContentMediaView | null;
+  variants: ContentVariantView[];
+};
+
+export const CONTENT_ACCOUNT_VIEW_STATUSES = ["connected", "expired", "revoked"] as const;
+
+export interface ContentAccountView {
+  id: string;
+  platform: ContentPlatform;
+  handle: string;
+  displayName: string | null;
+  status: (typeof CONTENT_ACCOUNT_VIEW_STATUSES)[number];
+  expiresAt: string | null;
+}
+
+export interface ContentAppView {
+  platform: ContentPlatform;
+  configured: boolean;
+  clientId: string | null;
+  hasSecret: boolean;
+  /** LinkedIn needs a client secret; X does not. */
+  needsSecret: boolean;
+}
+
+export interface ContentNetworkView {
+  platform: ContentPlatform;
+  /** v1 can post only to X and LinkedIn. */
+  available: boolean;
+  app: ContentAppView;
+  account: ContentAccountView | null;
+}
+
+export interface ContentAccountsState {
+  /** One per platform, in `CONTENT_PLATFORM_KEYS` order. */
+  networks: ContentNetworkView[];
+  connecting: ContentPlatform | null;
+  secretStorage: boolean;
+}
+
+export interface ContentCalendar {
+  from: string;
+  to: string;
+  timezone: string;
+  /** Posts with a `scheduledFor` in the range. */
+  posts: ContentPostView[];
+}
+
+export interface ContentChangedEvent {
+  postId?: string;
+  accounts?: true;
+}
+
+/** An attachment draft that the composer attachment flow made. The renderer never sends a path. */
+export interface ContentMediaInput {
+  draftId: string;
+}
+
+export interface ContentListPostsInput {
+  from?: string;
+  to?: string;
+  limit?: number;
+}
+
+export interface ContentSaveVariantInput {
+  platform: ContentPlatform;
+  /** Null takes the post's own back; absent leaves it as it is. */
+  body?: string | null;
+  title?: string | null;
+  media?: ContentMediaInput | null;
+  skipped?: boolean;
+}
+
+export interface ContentCreatePostInput {
+  body: string;
+  media?: ContentMediaInput | null;
+  scheduledFor?: string | null;
+  timezone: string;
+  variants?: ContentSaveVariantInput[];
+}
+
+export const CONTENT_UPDATE_ACTIONS = ["edit", "approve", "unschedule", "retry"] as const;
+
+export interface ContentUpdatePostInput {
+  postId: string;
+  action: (typeof CONTENT_UPDATE_ACTIONS)[number];
+  body?: string;
+  media?: ContentMediaInput | null;
+  timezone?: string;
+  variants?: ContentSaveVariantInput[];
+  /** Only for `retry`. */
+  platform?: ContentPlatform;
+}
+
+export interface ContentSchedulePostInput {
+  postId: string;
+  scheduledFor: string;
+}
+
+export interface ContentPublishNowInput {
+  postId: string;
+}
+
+export interface ContentDeletePostInput {
+  postId: string;
+}
+
+export interface ContentCalendarInput {
+  from: string;
+  to: string;
+}
+
+/** Saves the app when a client id is given, then signs in. */
+export interface ContentBeginConnectInput {
+  platform: ContentPlatform;
+  clientId?: string;
+  clientSecret?: string;
+}
+
+export interface ContentDisconnectInput {
+  accountId: string;
+}
+
+/** Stops the sign-in that waits for the browser. */
+export interface ContentCancelConnectInput {
+  platform: ContentPlatform;
+  cancel: true;
+}
+
+/** True when the record has all `required` keys and no key outside `required` and `optional`. */
+function hasKeys(
+  value: unknown,
+  required: readonly string[],
+  optional: readonly string[] = [],
+): value is DynamicRecord {
+  if (!isDynamicRecord(value)) return false;
+  const keys = Object.keys(value);
+  return (
+    required.every((key) => keys.includes(key)) && keys.every((key) => required.includes(key) || optional.includes(key))
+  );
+}
+
+const isNullableString = (value: unknown): value is string | null => value === null || isString(value);
+
+export function isContentMediaView(value: unknown): value is ContentMediaView {
+  return (
+    hasKeys(value, ["id", "kind", "mimeType", "bytes", "name"]) &&
+    isString(value.id) &&
+    isOneOf(["image", "video"] as const, value.kind) &&
+    isString(value.mimeType) &&
+    isNumber(value.bytes) &&
+    isString(value.name)
+  );
+}
+
+const isNullableMediaView = (value: unknown): value is ContentMediaView | null =>
+  value === null || isContentMediaView(value);
+
+const VARIANT_KEYS = [
+  "id",
+  "platform",
+  "accountId",
+  "body",
+  "title",
+  "media",
+  "status",
+  "attempt",
+  "externalPostId",
+  "errorCode",
+  "error",
+  "publishedAt",
+  "createdAt",
+  "updatedAt",
+] as const;
+
+export function isContentVariantView(value: unknown): value is ContentVariantView {
+  return (
+    hasKeys(value, VARIANT_KEYS) &&
+    isString(value.id) &&
+    isContentPlatform(value.platform) &&
+    isNullableString(value.accountId) &&
+    isNullableString(value.body) &&
+    isNullableString(value.title) &&
+    isNullableMediaView(value.media) &&
+    isContentVariantStatus(value.status) &&
+    isNumber(value.attempt) &&
+    isNullableString(value.externalPostId) &&
+    isNullableString(value.errorCode) &&
+    isNullableString(value.error) &&
+    isNullableString(value.publishedAt) &&
+    isString(value.createdAt) &&
+    isString(value.updatedAt)
+  );
+}
+
+const POST_KEYS = [
+  "id",
+  "body",
+  "media",
+  "approvalState",
+  "scheduledFor",
+  "timezone",
+  "authorAgentId",
+  "createdAt",
+  "updatedAt",
+  "status",
+  "variants",
+] as const;
+
+export function isContentPostView(value: unknown): value is ContentPostView {
+  return (
+    hasKeys(value, POST_KEYS) &&
+    isString(value.id) &&
+    isString(value.body) &&
+    isNullableMediaView(value.media) &&
+    isContentApprovalState(value.approvalState) &&
+    isNullableString(value.scheduledFor) &&
+    isString(value.timezone) &&
+    isNullableString(value.authorAgentId) &&
+    isString(value.createdAt) &&
+    isString(value.updatedAt) &&
+    isContentVariantStatus(value.status) &&
+    Array.isArray(value.variants) &&
+    value.variants.every(isContentVariantView)
+  );
+}
+
+export function isContentPostViews(value: unknown): value is ContentPostView[] {
+  return Array.isArray(value) && value.every(isContentPostView);
+}
+
+export function isContentAccountView(value: unknown): value is ContentAccountView {
+  return (
+    hasKeys(value, ["id", "platform", "handle", "displayName", "status", "expiresAt"]) &&
+    isString(value.id) &&
+    isContentPlatform(value.platform) &&
+    isString(value.handle) &&
+    isNullableString(value.displayName) &&
+    isOneOf(CONTENT_ACCOUNT_VIEW_STATUSES, value.status) &&
+    isNullableString(value.expiresAt)
+  );
+}
+
+export function isContentAppView(value: unknown): value is ContentAppView {
+  return (
+    hasKeys(value, ["platform", "configured", "clientId", "hasSecret", "needsSecret"]) &&
+    isContentPlatform(value.platform) &&
+    isBoolean(value.configured) &&
+    isNullableString(value.clientId) &&
+    isBoolean(value.hasSecret) &&
+    isBoolean(value.needsSecret)
+  );
+}
+
+export function isContentNetworkView(value: unknown): value is ContentNetworkView {
+  return (
+    hasKeys(value, ["platform", "available", "app", "account"]) &&
+    isContentPlatform(value.platform) &&
+    isBoolean(value.available) &&
+    isContentAppView(value.app) &&
+    (value.account === null || isContentAccountView(value.account))
+  );
+}
+
+export function isContentAccountsState(value: unknown): value is ContentAccountsState {
+  return (
+    hasKeys(value, ["networks", "connecting", "secretStorage"]) &&
+    Array.isArray(value.networks) &&
+    value.networks.every(isContentNetworkView) &&
+    (value.connecting === null || isContentPlatform(value.connecting)) &&
+    isBoolean(value.secretStorage)
+  );
+}
+
+export function isContentCalendar(value: unknown): value is ContentCalendar {
+  return (
+    hasKeys(value, ["from", "to", "timezone", "posts"]) &&
+    isString(value.from) &&
+    isString(value.to) &&
+    isString(value.timezone) &&
+    isContentPostViews(value.posts)
+  );
+}
+
+export function isContentChangedEvent(value: unknown): value is ContentChangedEvent {
+  return (
+    hasKeys(value, [], ["postId", "accounts"]) &&
+    (value.postId === undefined || isString(value.postId)) &&
+    (value.accounts === undefined || value.accounts === true)
+  );
 }

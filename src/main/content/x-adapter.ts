@@ -4,6 +4,7 @@
  */
 
 import { type DynamicRecord, isDynamicRecord } from "@openbot/contracts/runtime-values";
+import { sourceText } from "@openbot/i18n/source";
 import { Effect } from "effect";
 import { z } from "zod";
 import {
@@ -69,7 +70,11 @@ export class XAdapter implements ContentAdapter {
     if (!response.ok) return yield* xError(response, body);
     const data = isDynamicRecord(body) && isDynamicRecord(body.data) ? body.data : null;
     if (typeof data?.id !== "string" || typeof data.username !== "string")
-      return yield* new ContentAdapterError({ code: "server", status: response.status, message: "X sent no profile." });
+      return yield* new ContentAdapterError({
+        code: "server",
+        status: response.status,
+        message: sourceText("error.content.noProfile", { network: NETWORK }),
+      });
     return {
       tokens,
       profile: {
@@ -112,7 +117,7 @@ export class XAdapter implements ContentAdapter {
       return yield* new ContentAdapterError({
         code: "server",
         status: response.status,
-        message: "X sent no media id.",
+        message: sourceText("error.content.noMediaId", { network: NETWORK }),
       });
     // ponytail: a still image is usually ready at once; this branch matters for GIF and video. Keep it small.
     const pending = processingPending(data, data.id, input.body);
@@ -129,7 +134,7 @@ export class XAdapter implements ContentAdapter {
       return yield* new ContentAdapterError({
         code: "rejected",
         status: null,
-        message: "The X upload state is not valid.",
+        message: sourceText("error.content.uploadStateInvalid", { network: NETWORK }),
       });
     const url = new URL(MEDIA_URL);
     url.search = formBody({ command: "STATUS", media_id: pending.mediaId });
@@ -144,7 +149,7 @@ export class XAdapter implements ContentAdapter {
       return yield* new ContentAdapterError({
         code: "rejected",
         status: null,
-        message: "X could not process the image.",
+        message: sourceText("error.content.imageFailed", { network: NETWORK }),
       });
     const again = processingPending(data, pending.mediaId, pending.text);
     if (again) return again;
@@ -170,7 +175,7 @@ export class XAdapter implements ContentAdapter {
       return yield* new ContentAdapterError({
         code: "unknown-result",
         status: response.status,
-        message: "X sent no post id. Check X before you retry.",
+        message: sourceText("error.content.noPostId", { network: NETWORK }),
       });
     const result: ContentPublishResult = {
       kind: "published",
@@ -229,19 +234,30 @@ function xError(response: Response, body: unknown, tokenRequest = false): Effect
     shortProviderText(first.message) ??
     shortProviderText(record.error_description);
   if (status === 401 || (tokenRequest && (status === 400 || status === 403)))
-    return Effect.fail(new ContentAdapterError({ code: "signed-out", status, message: "Sign in to X again." }));
+    return Effect.fail(
+      new ContentAdapterError({ code: "signed-out", status, message: sourceText("error.content.signInAgainX") }),
+    );
   if (status === 429) {
     const reset = Number(response.headers.get("x-rate-limit-reset"));
-    const when = Number.isFinite(reset) && reset > 0 ? ` Try again after ${new Date(reset * 1000).toISOString()}.` : "";
-    return Effect.fail(
-      new ContentAdapterError({ code: "rate-limited", status, message: `X limits the posts now.${when}` }),
-    );
+    const message =
+      Number.isFinite(reset) && reset > 0
+        ? sourceText("error.content.rateLimitedUntil", { network: NETWORK, time: new Date(reset * 1000).toISOString() })
+        : sourceText("error.content.rateLimited", { network: NETWORK });
+    return Effect.fail(new ContentAdapterError({ code: "rate-limited", status, message }));
   }
   if (status >= 500)
     return Effect.fail(
-      new ContentAdapterError({ code: "server", status, message: `X had a server error (${status}).` }),
+      new ContentAdapterError({
+        code: "server",
+        status,
+        message: sourceText("error.content.serverError", { network: NETWORK, status: String(status) }),
+      }),
     );
   return Effect.fail(
-    new ContentAdapterError({ code: "rejected", status, message: `X refused the post: ${text ?? `HTTP ${status}`}` }),
+    new ContentAdapterError({
+      code: "rejected",
+      status,
+      message: sourceText("error.content.refusedPost", { network: NETWORK, reason: text ?? `HTTP ${status}` }),
+    }),
   );
 }

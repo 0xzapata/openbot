@@ -67,6 +67,7 @@ export interface ContentAccountsOptions {
 }
 
 interface PendingSignIn {
+  platform: ContentPlatform;
   state: string;
   code: Deferred.Deferred<string, ContentAccountError>;
 }
@@ -98,6 +99,15 @@ export class ContentAccounts {
     return [...this.#adapters.keys()];
   }
 
+  /** The network of the sign-in that waits for the browser, if any. */
+  get connecting(): ContentPlatform | null {
+    return this.#pending?.platform ?? null;
+  }
+
+  get canPersist(): boolean {
+    return this.#cipher.canPersist();
+  }
+
   adapter(platform: ContentPlatform): ContentAdapter | null {
     return this.#adapters.get(platform) ?? null;
   }
@@ -113,7 +123,8 @@ export class ContentAccounts {
     app: ContentApp,
   ) {
     const parsed = appSchema.safeParse(app);
-    if (!parsed.success) return yield* new ContentAccountError({ message: "The client id is missing." });
+    if (!parsed.success)
+      return yield* new ContentAccountError({ message: sourceText("error.content.clientIdMissing") });
     yield* this.#changeApps((apps) => apps.set(platform, parsed.data));
   });
 
@@ -131,39 +142,41 @@ export class ContentAccounts {
   readonly connect = Effect.fn("ContentAccounts.connect")(function* (this: ContentAccounts, platform: ContentPlatform) {
     const name = CONTENT_NETWORK_NAMES[platform];
     const adapter = this.#adapters.get(platform);
-    if (!adapter) return yield* new ContentAccountError({ message: `OpenBot cannot post to ${name} yet.` });
+    if (!adapter)
+      return yield* new ContentAccountError({ message: sourceText("error.content.notSupported", { network: name }) });
     const app = yield* this.app(platform);
-    if (!app) return yield* new ContentAccountError({ message: `Add the ${name} app first.` });
+    if (!app) return yield* new ContentAccountError({ message: sourceText("error.content.addApp", { network: name }) });
     if (!this.#cipher.canPersist())
       return yield* new ContentAccountError({ message: sourceText("error.app.secretStorageUnavailable") });
     const connected = this.#store.connectedAccount(platform);
     if (connected)
       return yield* new ContentAccountError({
-        message: `${name} already has a connected account (${connected.handle}). Disconnect it first.`,
+        message: sourceText("error.content.accountTaken", { network: name, handle: connected.handle }),
       });
 
     this.cancelConnect();
     const start = adapter.generateAuthUrl({ clientId: app.clientId, redirectUri: CONTENT_REDIRECT_URI });
-    const pending: PendingSignIn = { state: start.state, code: Deferred.makeUnsafe() };
+    const pending: PendingSignIn = { platform, state: start.state, code: Deferred.makeUnsafe() };
     this.#pending = pending;
     const code = yield* Effect.acquireUseRelease(
       Effect.tryPromise({
         try: () => this.#listen((url) => this.#receive(url)),
         catch: () =>
           new ContentAccountError({
-            message: `OpenBot could not listen on port ${CONTENT_REDIRECT_PORT} for the sign-in. Close the program that uses it and try again.`,
+            message: sourceText("error.content.portBusy", { port: String(CONTENT_REDIRECT_PORT) }),
           }),
       }),
       () =>
         Effect.gen({ self: this }, function* () {
           yield* Effect.tryPromise({
             try: () => this.#openExternal(start.url),
-            catch: () => new ContentAccountError({ message: "OpenBot could not open the browser." }),
+            catch: () => new ContentAccountError({ message: sourceText("error.content.browserFailed") }),
           });
           return yield* Deferred.await(pending.code).pipe(
             Effect.timeoutOrElse({
               duration: CONNECT_DEADLINE_MS,
-              orElse: () => Effect.fail(new ContentAccountError({ message: "The sign-in took too long. Try again." })),
+              orElse: () =>
+                Effect.fail(new ContentAccountError({ message: sourceText("error.content.signInTimeout") })),
             }),
           );
         }),
@@ -205,19 +218,20 @@ export class ContentAccounts {
         ),
       catch: (cause) =>
         new ContentAccountError({
-          message: cause instanceof ContentStateError ? cause.message : "OpenBot could not save the account.",
+          message: cause instanceof ContentStateError ? cause.message : sourceText("error.content.accountSaveFailed"),
         }),
     });
   });
 
-  cancelConnect(): void {
+  /** Ends the sign-in that waits for the browser: any one, or only the one of `platform`. */
+  cancelConnect(platform?: ContentPlatform): void {
     const pending = this.#pending;
+    if (!pending || (platform !== undefined && pending.platform !== platform)) return;
     this.#pending = null;
-    if (pending)
-      Deferred.doneUnsafe(
-        pending.code,
-        Effect.fail(new ContentAccountError({ message: "The sign-in was cancelled." })),
-      );
+    Deferred.doneUnsafe(
+      pending.code,
+      Effect.fail(new ContentAccountError({ message: sourceText("error.content.signInCancelled") })),
+    );
   }
 
   /** The row stays for the published posts that name it; its tokens are removed. */
@@ -254,11 +268,10 @@ export class ContentAccounts {
     this: ContentAccounts,
     account: ContentAccountRecord,
   ) {
-    const name = CONTENT_NETWORK_NAMES[account.platform];
     const signedOut = new ContentAdapterError({
       code: "signed-out",
       status: null,
-      message: `Sign in to ${name} again.`,
+      message: signInAgain(account.platform),
     });
     const adapter = this.#adapters.get(account.platform);
     const app = yield* this.app(account.platform).pipe(Effect.catch(() => Effect.succeed(null)));
@@ -283,32 +296,32 @@ export class ContentAccounts {
     return tokens.accessToken;
   });
 
-  /**
-   * The page that the browser shows. The checks of the request itself are in the listener.
-   * ponytail: the page reuses the generic `error.mcp.redirect*` texts, because `CallbackAnswer` allows
-   * only those keys. Widen the type and add `content.redirect*` keys if the page must name the network.
-   */
+  /** The page that the browser shows. The checks of the request itself are in the listener. */
   #receive(url: URL): CallbackAnswer {
     const pending = this.#pending;
     const state = url.searchParams.get("state");
-    if (!pending || !state || state !== pending.state) return { status: 400, message: "error.mcp.redirectNoSignIn" };
+    if (!pending || !state || state !== pending.state)
+      return { status: 400, message: "error.content.redirectNoSignIn" };
     // One use: a second callback with this `state` finds no sign-in.
     this.#pending = null;
     if (url.searchParams.get("error")) {
       Deferred.doneUnsafe(
         pending.code,
-        Effect.fail(new ContentAccountError({ message: "The network refused the sign-in. Try again." })),
+        Effect.fail(new ContentAccountError({ message: sourceText("error.content.signInRefused") })),
       );
-      return { status: 400, message: "error.mcp.redirectRefused" };
+      return { status: 400, message: "error.content.redirectRefused" };
     }
     const code = url.searchParams.get("code");
     if (!code) {
-      Deferred.doneUnsafe(pending.code, Effect.fail(new ContentAccountError({ message: "The sign-in sent no code." })));
-      return { status: 400, message: "error.mcp.redirectNotSignIn" };
+      Deferred.doneUnsafe(
+        pending.code,
+        Effect.fail(new ContentAccountError({ message: sourceText("error.content.signInNoCode") })),
+      );
+      return { status: 400, message: "error.content.redirectNotSignIn" };
     }
     registerSecretValue(code);
     Deferred.doneUnsafe(pending.code, Effect.succeed(code));
-    return { status: 200, message: "error.mcp.redirectSignedIn" };
+    return { status: 200, message: "error.content.redirectSignedIn" };
   }
 
   #encrypt(value: string): string {
@@ -326,7 +339,7 @@ export class ContentAccounts {
    * it. Keep unreadable entries, as `McpOAuthStore` does, if users report a keychain that refuses once.
    */
   readonly #readApps = Effect.fn("ContentAccounts.readApps")(function* (this: ContentAccounts) {
-    const unreadable = new ContentAccountError({ message: "OpenBot could not read the saved network apps." });
+    const unreadable = new ContentAccountError({ message: sourceText("error.content.appsUnreadable") });
     const text = yield* Effect.tryPromise({
       try: () => readFile(this.#appsPath, "utf8"),
       catch: (cause) => cause,
@@ -355,7 +368,7 @@ export class ContentAccounts {
           return yield* new ContentAccountError({ message: sourceText("error.app.secretStorageUnavailable") });
         const apps = yield* this.#readApps();
         change(apps);
-        const failed = new ContentAccountError({ message: "OpenBot could not save the network apps." });
+        const failed = new ContentAccountError({ message: sourceText("error.content.appsSaveFailed") });
         if (apps.size === 0) {
           yield* Effect.tryPromise({ try: () => rm(this.#appsPath, { force: true }), catch: () => failed });
           return;
@@ -368,6 +381,24 @@ export class ContentAccounts {
         }).pipe(Effect.mapError(() => failed));
       }),
     );
+  }
+}
+
+/** "Sign in to X again." for each network, as one fixed key each, so no other template matches it. */
+export function signInAgain(platform: ContentPlatform): string {
+  switch (platform) {
+    case "x":
+      return sourceText("error.content.signInAgainX");
+    case "linkedin":
+      return sourceText("error.content.signInAgainLinkedIn");
+    case "instagram":
+      return sourceText("error.content.signInAgainInstagram");
+    case "threads":
+      return sourceText("error.content.signInAgainThreads");
+    case "facebook_page":
+      return sourceText("error.content.signInAgainFacebook");
+    case "youtube":
+      return sourceText("error.content.signInAgainYouTube");
   }
 }
 
