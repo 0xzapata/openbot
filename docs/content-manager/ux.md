@@ -494,14 +494,15 @@ Reused, not new: `common.back`, `common.cancel`, `common.edit`, `common.delete`,
 
 ## 10. Open questions for Forge
 
-1. **Unschedule and unskip.** The spec has ten endpoints and no `unschedule-post`. design.md has
-   `content:unschedule-post`. AGENTS.md asks for reverse actions. Can `update-post` move a variant from
-   `queued` to `draft` and from `skipped` back? If not, one endpoint is missing.
-2. **Disconnect with scheduled posts.** This design leaves them `queued`; at publish time they fail
-   with `content.error.signedOut`. Confirm, or pick another rule.
+1. **Unschedule and unskip.** Settled (design.md section 0, decision A): `update-post` moves a queued
+   post back to `draft` and undoes a skip for one network. There is no eleventh endpoint.
+2. **Disconnect with scheduled posts.** Settled (decision B): the variants stay `queued`, and at publish
+   time they fail with `content.error.signedOut`. No automatic skip and no move to draft.
 3. **Character count.** The count needs a per-network function next to the limits in
    `packages/contracts/src/ipc-content.ts`. X counts weighted characters. Who owns it, and is a
    simplified count acceptable for v1?
 4. **Herald's proposed time.** Can an agent set `scheduled_for` on a pending post? Decision 2 assumes yes.
 5. **design.md and the spec differ** on deliveries (`content:list-deliveries`, `needs-attention`). This
-   document follows the spec: one variant is one delivery.
+   document follows the spec: one variant is one delivery. Settled in design.md section 0.
+6. **Agent deletion.** Settled (decision C): deleting an agent keeps its posts. "Drafted by {name}" must
+   show a fallback when the agent no longer exists.

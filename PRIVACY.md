@@ -1203,6 +1203,29 @@ routine's model provider, as other routine input does.
 Change a routine to a schedule, or delete it, to stop its URL. Deleting a routine deletes its
 receipts.
 
+## Content manager
+
+The content manager keeps social media posts, their text for each network, their image or video,
+and their status in the host's local SQLite database. It copies each media file to the
+`content-media` folder in OpenBot's data folder. An agent can write a post, but the post is sent
+only after the user approves it.
+
+The user can connect an X account and a LinkedIn member profile. The user enters the client ID, and
+for LinkedIn the client secret, of an app that the user registers with that network. OpenBot ships
+no app credentials. The sign-in opens the system browser, and the network sends the grant back to
+`127.0.0.1` on this computer. OpenBot encrypts the client secret, the access token and the refresh
+token with the operating system's secret storage, and stores them on this computer only. Management
+screens do not return them.
+
+At the scheduled time, or when the user publishes a post at once, OpenBot sends the network's text
+and the media file of that post to the network that the user chose: X (`api.x.com`) or LinkedIn
+(`api.linkedin.com`). To sign in, it also reads the account's ID, name and handle. No other data
+leaves the computer for this feature. A published post is subject to the network's own terms and
+privacy policy, and deleting it in OpenBot does not delete it from the network.
+
+Deleting an agent keeps the posts it wrote. Disconnecting an account deletes its tokens and keeps
+its posts.
+
 ## Workflows
 
 A workflow is a graph of steps that the user draws on a canvas. The host stores each workflow, its

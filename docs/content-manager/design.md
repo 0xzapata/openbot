@@ -1,6 +1,29 @@
 # Content manager: design
 
-Status: draft for review. No implementation code exists yet.
+Status: step 1 (agent tool) is built. Step 2 (X and LinkedIn publisher) is in progress.
+
+## 0. Settled decisions
+
+The user made these decisions. They replace the older text in sections 3 to 17 when the two
+disagree. Do not open them again.
+
+| # | Decision | Where it applies |
+| --- | --- | --- |
+| 1 | Six networks: X, LinkedIn personal profile, Instagram, Threads, Facebook Pages, YouTube. Build order: agent tool, X and LinkedIn, UI, then Meta and YouTube. | All steps |
+| 2 | Users and agents write posts. An agent's post is `pending` until the user approves it. | `content_create_post` |
+| 3 | Three tables: `content_accounts`, `content_posts`, `content_variants`. No deliveries table: one shared time makes a delivery one variant. | Migration 60 |
+| 4 | One shared scheduled time for all networks of a post. Approve once, skip per network. | Store, UI |
+| 5 | One image per post (a video for YouTube), copied to all networks and replaceable for each network. | Store, composer |
+| 6 | The post status is derived by `contentPostStatus`, never stored. Statuses: `draft`, `queued`, `publishing`, `published`, `failed`, `skipped`. | Contracts |
+| 7 | Manual retry only. No automatic backoff, no retry ladder. | Publisher |
+| 8 | Ten IPC endpoints. | Step 3 |
+| A | `update-post` can move a queued post back to `draft` (unschedule) and can undo a skip for one network. There is no eleventh endpoint. | Store, step 3 |
+| B | When the user disconnects a network, its variants stay `queued`. At publish time they fail with "Sign in to {network} again." No automatic skip and no move to draft. | Publisher |
+| C | Deleting an agent keeps its posts, its variants and their events. A published variant keeps its external post id for audit. | Agent deletion |
+
+Sections 5 and 6 still describe `content_deliveries`, `needs-attention` and a backoff ladder. Decisions
+3, 6 and 7 replace that text: a variant is the delivery, an unknown result is `failed` with the code
+`unknown-result`, and the user retries.
 
 ## 1. Summary
 
