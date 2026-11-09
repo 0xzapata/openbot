@@ -10,6 +10,7 @@ import { AgentApiKeys } from "../backend/agent-api-keys";
 import { AgentDatabaseSupervisor } from "../backend/agent-data/agent-database-supervisor";
 import { AgentTables } from "../backend/agent-data/agent-tables";
 import { AgentRoutineStore } from "../backend/agent-routine-store";
+import { ContentStore } from "../backend/content/content-store";
 import { diskRestoreEnded, diskRestoring } from "../backend/disk-restore";
 import { DiscordConnectFailed, toDiscordConnectFailed } from "../backend/messaging/discord/discord-connect";
 import { SlackConnectFailed, toSlackConnectFailed } from "../backend/messaging/slack/slack-connect";
@@ -35,6 +36,10 @@ import {
   browserProxyConnection,
   createBrowserProfileService,
 } from "./browser-profile-service";
+import { CONTENT_APPS_FILE, ContentAccounts, contentCallbackListener } from "./content/content-accounts";
+import { ContentPublisher } from "./content/content-publisher";
+import { LinkedInAdapter } from "./content/linkedin-adapter";
+import { XAdapter } from "./content/x-adapter";
 import { feedbackFacts, feedbackSender } from "./feedback";
 import { HostReleaseService, readInstallationMode } from "./host-release-service";
 import {
@@ -1946,6 +1951,30 @@ export async function createApplicationServices({
   await Effect.runPromise(agentApiKeys.syncVault().pipe(Effect.ignore));
   // The schedule triggers of workflows share the routine timer; built after the workflows below.
   let workflowTriggers: WorkflowTriggers | null = null;
+  // The content publisher shares the routine timer. A user write that queues a post plans the timer again;
+  // `service` is built below, and nothing queues a post before it exists.
+  const contentStore = new ContentStore(store.database, () => service.armRoutines());
+  // Before the timer can fire: a post that a restart cut off fails and waits for the user.
+  contentStore.recoverInterrupted();
+  const contentAdapterOptions = {
+    fetch,
+    now: () => new Date(),
+    sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+  };
+  const contentAccounts = new ContentAccounts({
+    store: contentStore,
+    cipher: secretCipher,
+    appsPath: join(app.getPath("userData"), CONTENT_APPS_FILE),
+    adapters: [new XAdapter(contentAdapterOptions), new LinkedInAdapter(contentAdapterOptions)],
+    openExternal: openLink,
+    listen: contentCallbackListener(language),
+    now: () => new Date(),
+  });
+  const contentPublisher = new ContentPublisher({
+    store: contentStore,
+    accounts: contentAccounts,
+    now: () => new Date(),
+  });
   // Load the local catalog before telemetry starts so tool steps and inventory use the same names.
   // Agents read it too, for the state of a Marketplace app they suggest.
   const catalogPluginServers = await Effect.runPromise(
@@ -2079,7 +2108,7 @@ export async function createApplicationServices({
     responseStyle: () => serverPersonality.responseStyle(),
     timezone: () => serverTimezone.effective(),
     // `workflowTriggers` is built later, after the workflows.
-    extraRoutineSources: () => (workflowTriggers ? [workflowTriggers] : []),
+    extraRoutineSources: () => (workflowTriggers ? [workflowTriggers, contentPublisher] : [contentPublisher]),
     // `host` is built later, after the agent service; a channel tool reads it when it runs.
     channelPersonAgentLevel: (personId, agentId) => host.channelPersonAgentLevel(personId, agentId),
     channelRemotePerson: (personId) => host.channelPersonIsRemote(personId),
