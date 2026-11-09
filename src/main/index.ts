@@ -81,6 +81,7 @@ import { browserIpcHandlers } from "./ipc/browser-handlers";
 import { channelMemoryIpcHandlers } from "./ipc/channel-memory-handlers";
 import { channelRoutineIpcHandlers } from "./ipc/channel-routine-handlers";
 import { computerUseIpcHandlers } from "./ipc/computer-use-handlers";
+import { contentIpcHandlers } from "./ipc/content-handlers";
 import { customAgentIpcHandlers } from "./ipc/custom-agent-handlers";
 import { customProviderIpcHandlers } from "./ipc/custom-provider-handlers";
 import { registerIpcGroups } from "./ipc/define-ipc-group";
@@ -489,6 +490,7 @@ const {
   forwardBitwardenConnectorStatus,
   forwardPasswordManagerStatus,
   forwardVaultState,
+  forwardContentChanged,
   forwardHostStatus,
   forwardRemoteDesktopSessions,
   forwardServers,
@@ -759,6 +761,7 @@ function registerIpcHandlers({
   hostedServers,
   localServers,
   routineFeed,
+  content,
   events,
   customProviderChanges,
   customAgentChanges,
@@ -884,6 +887,7 @@ function registerIpcHandlers({
     ...billingIpcHandlers({ billing }),
     ...licenseIpcHandlers({ license }),
     ...routineFeedIpcHandlers({ routineFeed }),
+    ...contentIpcHandlers({ content }),
     ...eventsIpcHandlers({ events, remoteServers }),
     ...hostedServerIpcHandlers({ hostedServers }),
     ...localServerIpcHandlers({ localServers }),
@@ -1398,6 +1402,7 @@ if (!hasSingleInstanceLock) {
         forwardSpeechModelStatus,
         forwardVoiceServerSettings,
         forwardWorkflowNotice,
+        forwardContentChanged,
         prepareForUpdateInstall,
         quitting: () => quitStarted,
       });

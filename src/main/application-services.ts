@@ -38,6 +38,7 @@ import {
 } from "./browser-profile-service";
 import { CONTENT_APPS_FILE, ContentAccounts, contentCallbackListener } from "./content/content-accounts";
 import { ContentPublisher } from "./content/content-publisher";
+import { ContentService } from "./content/content-service";
 import { LinkedInAdapter } from "./content/linkedin-adapter";
 import { XAdapter } from "./content/x-adapter";
 import { feedbackFacts, feedbackSender } from "./feedback";
@@ -92,6 +93,7 @@ import type {
   CapabilityState,
   CentralAuthState,
   ComputerUseState,
+  ContentChangedEvent,
   ProviderRuntimeSnapshot,
   SpeechModelStatus,
   VoiceModelStatus,
@@ -616,6 +618,7 @@ export interface ApplicationServiceContext {
   forwardSpeechModelStatus: (status: SpeechModelStatus) => void;
   forwardVoiceServerSettings: (settings: VoiceServerSettings | null) => void;
   forwardWorkflowNotice: (notice: WorkflowNotice) => void;
+  forwardContentChanged: (event: ContentChangedEvent) => void;
   prepareForUpdateInstall: () => Promise<void>;
   /** True once a quit starts, also before this function returns. See `CuaDriverRuntimeOptions.quitting`. */
   quitting: () => boolean;
@@ -717,6 +720,7 @@ export interface ApplicationServices {
   license: LicenseDesktopService;
   hostedServers: HostedServerDesktopService;
   routineFeed: RoutineFeedServer;
+  content: ContentService;
   events: HostEventsService;
   eventsRuntime: HostEventsRuntime;
   /** The terminal control of a self-hosted server. Null in every other build. */
@@ -1020,6 +1024,7 @@ export async function createApplicationServices({
   forwardSpeechModelStatus,
   forwardVoiceServerSettings,
   forwardWorkflowNotice,
+  forwardContentChanged,
   prepareForUpdateInstall,
   quitting,
 }: ApplicationServiceContext): Promise<ApplicationServices> {
@@ -1953,7 +1958,7 @@ export async function createApplicationServices({
   let workflowTriggers: WorkflowTriggers | null = null;
   // The content publisher shares the routine timer. A user write that queues a post plans the timer again;
   // `service` is built below, and nothing queues a post before it exists.
-  const contentStore = new ContentStore(store.database, () => service.armRoutines());
+  const contentStore = new ContentStore(store.database, () => service.armRoutines(), forwardContentChanged);
   // Before the timer can fire: a post that a restart cut off fails and waits for the user.
   contentStore.recoverInterrupted();
   const contentAdapterOptions = {
@@ -1973,6 +1978,12 @@ export async function createApplicationServices({
   const contentPublisher = new ContentPublisher({
     store: contentStore,
     accounts: contentAccounts,
+    now: () => new Date(),
+  });
+  const content = new ContentService({
+    store: contentStore,
+    accounts: contentAccounts,
+    drafts: mailbox,
     now: () => new Date(),
   });
   // Load the local catalog before telemetry starts so tool steps and inventory use the same names.
@@ -4021,6 +4032,7 @@ export async function createApplicationServices({
     license,
     hostedServers,
     routineFeed,
+    content,
     events,
     eventsRuntime,
     serverMode,
