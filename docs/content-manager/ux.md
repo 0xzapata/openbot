@@ -2,7 +2,8 @@
 
 Status: design draft for review. Owner: Loupe (design). Forge implements.
 Contract: the approved v1 spec (`content-manager-spec.md`). Technical draft: [design.md](design.md).
-Mockups (git ignores them): `.openbot-build/mockups/queue.html`, `composer.html`, `calendar.html`.
+Visual companion: [content-manager.html](content-manager.html), one static page with the spec summary, every state,
+the three screens and the reuse table. Open it in a browser; it needs no connection.
 
 Rule for this document: reuse first. Each UI need names an existing component, or says "New" and why.
 
@@ -108,16 +109,16 @@ flowchart TD
 
 ## 3. Screen inventory
 
-| ID | Screen | Kind | Opens from | Mockup |
+| ID | Screen | Kind | Opens from | In content-manager.html |
 | --- | --- | --- | --- | --- |
-| S1 | Content: Queue (home) | window page, `titled` kind | rail, palette | `queue.html` |
-| S2 | Content: Calendar | same page, second view | Queue/Calendar tabs | `calendar.html` |
-| S3 | Composer (new, edit, review a pending post) | pane view with Back, as the schedule `onBack` | New post, Edit, a calendar entry | `composer.html` |
-| D1 | Accounts | dialog | header Accounts button, empty state, Connect in composer | `queue.html` (states) |
-| D2 | Confirms: publish now, delete, retry unknown, discard changes, disconnect | `ConfirmDialog` | actions | `queue.html`, `composer.html` (states) |
-| T1 | Toasts: post skipped, approved for a time (each with Undo) | `toast` | actions | `queue.html` (states) |
-| B1 | Banner: account signed out | `Alert` warning | queue and composer, top | `queue.html` |
-| B2 | Notice: page is local only | `Alert` neutral | a joined server | `queue.html` (states) |
+| S1 | Content: Queue (home) | window page, `titled` kind | rail, palette | `#screen-queue` |
+| S2 | Content: Calendar | same page, second view | Queue/Calendar tabs | `#screen-calendar` |
+| S3 | Composer (new, edit, review a pending post) | pane view with Back, as the schedule `onBack` | New post, Edit, a calendar entry | `#screen-composer` |
+| D1 | Accounts | dialog | header Accounts button, empty state, Connect in composer | `#state-accounts` |
+| D2 | Confirms: publish now, delete, retry unknown, discard changes, disconnect | `ConfirmDialog` | actions | queue and composer state boards |
+| T1 | Toasts: post skipped, approved for a time (each with Undo) | `toast` | actions | queue state board |
+| B1 | Banner: account signed out | `Alert` warning | queue and composer, top | `#state-expired` |
+| B2 | Notice: page is local only | `Alert` neutral | a joined server | queue state board |
 
 The page header row is the same in both views: Queue/Calendar tabs on the left, Accounts and New
 post on the right. The calendar adds its own toolbar row below (range, Today, Day/Week/Month), the
@@ -489,7 +490,7 @@ Reused, not new: `common.back`, `common.cancel`, `common.edit`, `common.delete`,
    confirm, because Unschedule can undo it.
 6. **Delete says what it does not do.** It deletes the OpenBot copy only.
 7. **The composer is a pane view with Back, not a dialog.** Two columns need the width.
-8. **Dark palette only in the mockups.** Light values come from `tokens-light.css`; no new token.
+8. **Dark palette only in content-manager.html.** Light values come from `tokens-light.css`; no new token.
 
 ## 10. Open questions for Forge
 
