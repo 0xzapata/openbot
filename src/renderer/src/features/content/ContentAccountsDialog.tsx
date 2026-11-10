@@ -145,8 +145,12 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
       return network && needsHost(network, hostConfigured()) ? network.platform : null;
     },
     (platform) => {
-      const network = accounts()?.networks.find((candidate) => candidate.platform === platform);
-      if (network) requestAnimationFrame(() => openSetup(network));
+      if (!platform) return;
+      // The store is read in the frame, not in this callback (Solid 2: no store reads in an effect callback).
+      requestAnimationFrame(() => {
+        const network = accounts()?.networks.find((candidate) => candidate.platform === platform);
+        if (network) openSetup(network);
+      });
     },
   );
 
@@ -491,18 +495,16 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
                                   </Match>
                                   <Match when={account()?.status === "connected"}>
                                     <Show when={network().platform === "instagram"}>
-                                      <Show
-                                        when={needsHost(network(), hostConfigured())}
-                                        fallback={
-                                          <Button variant="ghost" size="xs" onClick={() => openSetup(network())}>
-                                            {t("content.accounts.mediaHost.title")}
-                                          </Button>
-                                        }
+                                      {/* One button, so focus stays on it when a saved host changes its label. */}
+                                      <Button
+                                        variant={needsHost(network(), hostConfigured()) ? "outline" : "ghost"}
+                                        size="xs"
+                                        onClick={() => openSetup(network())}
                                       >
-                                        <Button variant="outline" size="xs" onClick={() => openSetup(network())}>
-                                          {t("content.action.setUpHost")}
-                                        </Button>
-                                      </Show>
+                                        {needsHost(network(), hostConfigured())
+                                          ? t("content.action.setUpHost")
+                                          : t("content.accounts.mediaHost.title")}
+                                      </Button>
                                     </Show>
                                     <Button
                                       variant="ghost"

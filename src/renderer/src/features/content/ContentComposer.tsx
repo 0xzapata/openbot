@@ -546,7 +546,12 @@ export function ContentComposer(props: ContentComposerProps) {
     void attach(() => props.content.port().agent.chooseAttachments({ filter: "images" }, LOCAL_SERVER_ID));
   /** A dropped file is checked by its first bytes and its size before main keeps a draft of it. */
   async function dropFile(file: File) {
-    const type = detectContentMediaType(new Uint8Array(await file.slice(0, 64).arrayBuffer()));
+    const head = await file
+      .slice(0, 64)
+      .arrayBuffer()
+      .catch(() => null);
+    if (!head) return refuseMedia(sourceText("error.content.mediaCopyFailed"));
+    const type = detectContentMediaType(new Uint8Array(head));
     const refusal = mediaRefusal(type?.mimeType ?? null, file.size);
     if (refusal) return refuseMedia(refusal);
     await attach(
@@ -862,6 +867,10 @@ export function ContentComposer(props: ContentComposerProps) {
         title={t("content.confirm.publishNow.title")}
         description={t("content.confirm.publishNow.body", { count: chosen().length })}
         confirmLabel={t("content.confirm.publishNow.action")}
+        // G1: after a failed publish, focus goes to the Retry of the save alert, not back to the opener.
+        restoreFocusTarget={
+          ui.failed === "publishNow" ? root?.querySelector<HTMLElement>("#content-composer-retry") : undefined
+        }
         onCancel={() =>
           setUi((draft) => {
             draft.confirm = null;

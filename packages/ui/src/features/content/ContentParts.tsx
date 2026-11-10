@@ -200,9 +200,10 @@ export interface ContentMediaFieldProps {
   onRemove: () => void;
 }
 
-/** One image or video for the post: choose or drop a file; the chosen file shows with a remove button. */
+/** Over this size the reading text says that the file takes a while. */
 const LARGE_READ_BYTES = 100 * 1024 * 1024;
 
+/** One image or video for the post: choose or drop a file; the chosen file shows with a remove button. */
 export function ContentMediaField(props: ContentMediaFieldProps) {
   const { t, format } = useText();
   const [over, setOver] = createSignal(false);
