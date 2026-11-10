@@ -30,7 +30,7 @@ import {
 import { createMemo, createStore, For, Match, Show, Switch, untrack } from "solid-js";
 import { useText } from "../../text";
 import { ContentNetworkMark } from "./ContentParts";
-import { postBadge } from "./content-status";
+import { CONTENT_NETWORK_NAMES, postBadge } from "./content-status";
 
 // The post calendar copies the layout and classes of `RoutineCalendar` (`routine-planner-*`). A post is
 // not a routine run, so it has its own component; RoutineCalendar keeps its props.
@@ -52,6 +52,8 @@ export interface PostCalendarProps {
   onRangeChange?: (first: CalendarDay, last: CalendarDay) => void;
   onOpenPost: (postId: string) => void;
   onNewPost?: () => void;
+  /** Starts a post on one day; the day view offers it for today and later days with no post. */
+  onNewPostForDay?: (day: CalendarDay) => void;
   onRetry?: () => void;
 }
 
@@ -167,8 +169,15 @@ export function PostCalendar(props: PostCalendarProps) {
     if (badge.kind === "failed") return t("content.status.failed", { count: badge.count });
     return t(STATUS_LABEL[entry.status]);
   };
-  const entryNote = (entry: CalendarEntry) =>
-    entry.status === "queued" ? t("content.calendar.networks", { count: entry.networks.length }) : statusText(entry);
+  const entryNote = (entry: CalendarEntry) => {
+    const processing = entry.post.variants.find(
+      (variant) => variant.status === "publishing" && variant.pendingReason === "processing",
+    );
+    if (processing) return t("content.variant.processingNote", { network: CONTENT_NETWORK_NAMES[processing.platform] });
+    return entry.status === "queued"
+      ? t("content.calendar.networks", { count: entry.networks.length })
+      : statusText(entry);
+  };
 
   const rangeLabel = () => {
     const days = visibleDays();
@@ -301,7 +310,7 @@ export function PostCalendar(props: PostCalendarProps) {
           </div>
         </Match>
         <Match when={props.state === "error"}>
-          <Alert tone="danger" class="routine-planner-error">
+          <Alert tone="danger" role="alert" class="routine-planner-error">
             <AlertContent>
               <AlertDescription>{t("content.calendar.loadFailed")}</AlertDescription>
             </AlertContent>
@@ -321,6 +330,12 @@ export function PostCalendar(props: PostCalendarProps) {
               fallback={
                 <PostCalendarDay
                   entries={entriesByDay().get(state.anchor) ?? []}
+                  dayLabel={longDay(state.anchor)}
+                  onNewPost={
+                    props.onNewPostForDay && state.anchor >= today()
+                      ? () => props.onNewPostForDay?.(state.anchor)
+                      : undefined
+                  }
                   timeZone={props.timeZone}
                   timeText={timeText}
                   note={entryNote}
@@ -437,6 +452,9 @@ export function PostCalendar(props: PostCalendarProps) {
 /** One day, in hours. */
 function PostCalendarDay(props: {
   entries: CalendarEntry[];
+  dayLabel: string;
+  /** Absent for a day in the past. */
+  onNewPost?: (() => void) | undefined;
   timeZone: string;
   timeText: (at: string) => string;
   note: (entry: CalendarEntry) => string;
@@ -454,7 +472,22 @@ function PostCalendarDay(props: {
   });
   return (
     <div class="routine-planner-day-view">
-      <Show when={hours().length > 0} fallback={<p class="routine-planner-note">{t("content.calendar.dayEmpty")}</p>}>
+      <Show
+        when={hours().length > 0}
+        fallback={
+          <div class="post-calendar-empty">
+            <p class="routine-planner-note">{t("content.calendar.dayEmpty")}</p>
+            <Show when={props.onNewPost}>
+              {(onNewPost) => (
+                <Button variant="outline" size="sm" onClick={() => onNewPost()()}>
+                  <Plus aria-hidden="true" />
+                  {t("content.calendar.newForDay", { day: props.dayLabel })}
+                </Button>
+              )}
+            </Show>
+          </div>
+        }
+      >
         <For each={hours()} keyed={(group) => group.hour}>
           {(group) => (
             <section class="routine-planner-hour">

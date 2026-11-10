@@ -43,3 +43,30 @@ export const Busy: Story = {
   args: { labelledBy: "media-busy", file: null, busy: true, onChoose: fn(), onDrop: fn(), onRemove: fn() },
   render,
 };
+
+/** A dropped file while main reads and copies it. Over 100 MB the line says that it takes a while. */
+export const Reading: Story = {
+  args: {
+    labelledBy: "media-reading",
+    file: null,
+    busy: true,
+    reading: { name: "launch-video.mp4", bytes: 412 * 1024 * 1024 },
+    onChoose: fn(),
+    onDrop: fn(),
+    onRemove: fn(),
+  },
+  render,
+};
+
+/** A refused file: the field stays empty, the text is under the drop area, and Choose names it. */
+export const Refused: Story = {
+  args: {
+    labelledBy: "media-refused",
+    file: null,
+    error: "The image is larger than 20 MB.",
+    onChoose: fn(),
+    onDrop: fn(),
+    onRemove: fn(),
+  },
+  render,
+};

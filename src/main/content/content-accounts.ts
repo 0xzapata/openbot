@@ -130,7 +130,15 @@ export class ContentAccounts {
    * only from a public URL, so it counts only while an image host is set up.
    */
   get platforms(): ContentPlatform[] {
-    return [...this.#adapters.keys()].filter((platform) => platform !== "instagram" || this.#mediaHost !== null);
+    return this.adapterPlatforms.filter((platform) => platform !== "instagram" || this.#mediaHost !== null);
+  }
+
+  /**
+   * The networks with an adapter. The publisher takes due work of all of them: a queued Instagram variant
+   * with no image host fails at its time (decision B) and does not wait out of sight.
+   */
+  get adapterPlatforms(): ContentPlatform[] {
+    return [...this.#adapters.keys()];
   }
 
   /** The image host, when the user set one up. */

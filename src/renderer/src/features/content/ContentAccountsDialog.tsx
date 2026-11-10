@@ -30,13 +30,19 @@ import {
 import { ContentNetworkMark } from "@openbot/ui/features/content/ContentParts";
 import { CONTENT_NETWORK_NAMES, contentGateKey } from "@openbot/ui/features/content/content-status";
 import { useText } from "@openbot/ui/text";
-import { createEffect, createStore, For, Match, onSettled, Show, Switch } from "solid-js";
+import { createEffect, createStore, For, flush, Match, onSettled, Show, Switch } from "solid-js";
 import type { ContentState } from "./content-context";
 
+/** Instagram is connected, and no image host is set up: it cannot post (G13). */
+const needsHost = (network: ContentNetworkView, hostConfigured: boolean) =>
+  network.platform === "instagram" && network.account?.status === "connected" && !hostConfigured;
+
 /** The badge of a network, as `ProviderAccountList` maps account states. */
-function accountBadge(network: ContentNetworkView) {
+function accountBadge(network: ContentNetworkView, hostConfigured: boolean) {
   if (!network.available) return { variant: "outline", key: "content.accounts.status.unavailable" } as const;
   const status = network.account?.status;
+  if (needsHost(network, hostConfigured))
+    return { variant: "warning-light", key: "content.network.needsHost" } as const;
   if (status === "connected") return { variant: "success-light", key: "content.accounts.status.connected" } as const;
   if (status === "expired") return { variant: "warning-light", key: "content.accounts.status.signedOut" } as const;
   return null;
@@ -90,6 +96,8 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
     });
   });
   const hostView = () => accounts()?.mediaHost ?? null;
+  const hostConfigured = () => hostView()?.configured === true;
+  let dialog: HTMLElement | undefined;
   /** The host fields that the Instagram row sends; an empty key field keeps the saved key. */
   const hostInput = (): ContentMediaHostInput => ({
     endpoint: state.host.endpoint.trim(),
@@ -104,7 +112,7 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
     !state.host.publicBaseUrl.trim() ||
     (!hostView()?.hasKeys && (!state.host.accessKeyId.trim() || !state.host.secretAccessKey));
   /** Opens the setup fields of a network, with the saved values. */
-  const openSetup = (network: ContentNetworkView) =>
+  const openSetup = (network: ContentNetworkView) => {
     setState((draft) => {
       draft.setup = network.platform;
       draft.clientId = network.app.clientId ?? "";
@@ -118,6 +126,29 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
         secretAccessKey: "",
       };
     });
+    // G13: the host fields of Instagram take focus on their first empty field.
+    if (network.platform !== "instagram") return;
+    flush();
+    const empty = [...(dialog?.querySelectorAll<HTMLInputElement>(".content-account-host input") ?? [])].find(
+      (input) => !input.value,
+    );
+    empty?.focus();
+  };
+
+  // `openAccounts("instagram")` from the composer or the queue opens the image host step at once, so it
+  // takes one click. Only while Instagram is connected and has no host: a Connect asks for it anyway.
+  // The compute gives a string, so a reload of the accounts does not open the step again over typed values.
+  createEffect(
+    () => {
+      const platform = props.content.state.accountsDialog?.platform;
+      const network = accounts()?.networks.find((candidate) => candidate.platform === platform);
+      return network && needsHost(network, hostConfigured()) ? network.platform : null;
+    },
+    (platform) => {
+      const network = accounts()?.networks.find((candidate) => candidate.platform === platform);
+      if (network) requestAnimationFrame(() => openSetup(network));
+    },
+  );
 
   const setError = (platform: ContentPlatform, error: string | undefined) =>
     setState((draft) => {
@@ -184,6 +215,9 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
       draft.host.accessKeyId = "";
       draft.host.secretAccessKey = "";
     });
+    // The Save button is gone: focus goes to the action of the row.
+    flush();
+    dialog?.querySelector<HTMLElement>(`[data-platform="${network.platform}"] .ui-item-actions button`)?.focus();
     void call(network.platform, () =>
       props.content.port().content.beginConnect({ platform: network.platform, mediaHost }),
     );
@@ -209,6 +243,7 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
           <Dialog.Overlay>
             <Dialog.Content
               as="section"
+              ref={dialog}
               class="content-accounts"
               onOpenAutoFocus={() => {
                 const opener = document.activeElement;
@@ -262,13 +297,14 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
                     <For each={current().networks} keyed={(network) => network.platform}>
                       {(network) => {
                         const name = () => CONTENT_NETWORK_NAMES[network().platform];
-                        const badge = () => accountBadge(network());
+                        const badge = () => accountBadge(network(), hostConfigured());
                         const account = () =>
                           network().account?.status === "revoked" ? null : (network().account ?? null);
                         return (
                           <Item
                             role="listitem"
                             class="content-account"
+                            data-platform={network().platform}
                             data-focus={
                               props.content.state.accountsDialog?.platform === network().platform ? "" : undefined
                             }
@@ -333,7 +369,7 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
                                   <Text variant="caption">{t("content.accounts.mediaHost.configured")}</Text>
                                 </Show>
                                 <Show when={state.setup === "instagram"}>
-                                  <fieldset class="content-account-app">
+                                  <fieldset class="content-account-app content-account-host">
                                     <legend>{t("content.accounts.mediaHost.title")}</legend>
                                     <Text variant="caption">{t("content.accounts.mediaHost.description")}</Text>
                                     <Field label={t("content.accounts.mediaHost.endpoint")} required>
@@ -455,9 +491,18 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
                                   </Match>
                                   <Match when={account()?.status === "connected"}>
                                     <Show when={network().platform === "instagram"}>
-                                      <Button variant="ghost" size="xs" onClick={() => openSetup(network())}>
-                                        {t("content.accounts.mediaHost.title")}
-                                      </Button>
+                                      <Show
+                                        when={needsHost(network(), hostConfigured())}
+                                        fallback={
+                                          <Button variant="ghost" size="xs" onClick={() => openSetup(network())}>
+                                            {t("content.accounts.mediaHost.title")}
+                                          </Button>
+                                        }
+                                      >
+                                        <Button variant="outline" size="xs" onClick={() => openSetup(network())}>
+                                          {t("content.action.setUpHost")}
+                                        </Button>
+                                      </Show>
                                     </Show>
                                     <Button
                                       variant="ghost"

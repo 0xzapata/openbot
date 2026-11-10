@@ -1,3 +1,4 @@
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { LOCAL_SERVER_ID } from "@openbot/contracts/ipc";
 import {
   CONTENT_PLATFORM_KEYS,
@@ -7,7 +8,9 @@ import {
   type ContentPlatform,
   type ContentPostView,
   type ContentSaveVariantInput,
+  detectContentMediaType,
 } from "@openbot/contracts/ipc-content";
+import { sourceText } from "@openbot/i18n/source";
 import { addCalendarDays, calendarDayOf } from "@openbot/team-client/routine-calendar-dates";
 import { routineOnceInstant } from "@openbot/team-client/routine-schedule";
 import {
@@ -28,6 +31,7 @@ import {
   Label,
   Megaphone,
   RadioGroup,
+  Skeleton,
   Textarea,
   TriangleAlert,
 } from "@openbot/ui";
@@ -48,7 +52,7 @@ import type { RoutineCalendarAgent } from "@openbot/ui/features/conversation/Rou
 import { RoutineDateField } from "@openbot/ui/features/conversation/RoutineDateField";
 import { RoutineTimeField } from "@openbot/ui/features/conversation/RoutineTimeField";
 import { useText } from "@openbot/ui/text";
-import { createMemo, createStore, For, onSettled, Show, snapshot, untrack } from "solid-js";
+import { createMemo, createStore, For, flush, onSettled, Show, snapshot, untrack } from "solid-js";
 import type { ComposerForm, ComposerNetwork, ContentState } from "./content-context";
 
 type BlockReason =
@@ -70,18 +74,41 @@ function clockOf(at: Date, timeZone: string): string {
   return formatter.format(at);
 }
 
+const MB = 1024 * 1024;
+/** The media file types that main takes, from `detectContentMediaType`. */
+const MEDIA_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif", "video/mp4", "video/quicktime"]);
+/** The main refusals that belong to the file, so the media field shows them, not the save alert. */
+const mediaRefusals = () => [
+  sourceText("error.content.mediaType"),
+  sourceText("error.content.imageTooLarge", { size: String(INPUT_LIMITS.contentImageBytes / MB) }),
+  sourceText("error.content.videoTooLarge", { size: String(INPUT_LIMITS.contentVideoBytes / MB) }),
+  sourceText("error.content.mediaCopyFailed"),
+  sourceText("error.content.unknownDraft"),
+];
+
+/** Why a file cannot be the media of a post, as `sourceText` English; null when it can. */
+function mediaRefusal(mimeType: string | null, bytes: number): string | null {
+  if (!mimeType || !MEDIA_TYPES.has(mimeType)) return sourceText("error.content.mediaType");
+  if (mimeType.startsWith("image/") && bytes > INPUT_LIMITS.contentImageBytes)
+    return sourceText("error.content.imageTooLarge", { size: String(INPUT_LIMITS.contentImageBytes / MB) });
+  if (mimeType.startsWith("video/") && bytes > INPUT_LIMITS.contentVideoBytes)
+    return sourceText("error.content.videoTooLarge", { size: String(INPUT_LIMITS.contentVideoBytes / MB) });
+  return null;
+}
+
 function formFor(
   post: ContentPostView | null,
   networks: readonly ContentNetworkView[],
   now: Date,
   zone: string,
+  startAt: string | null,
 ): ComposerForm {
   const usable = new Set(
     networks.flatMap((network) =>
       network.available && network.account && network.account.status !== "revoked" ? [network.platform] : [],
     ),
   );
-  const at = post?.scheduledFor ? new Date(post.scheduledFor) : null;
+  const at = post?.scheduledFor ? new Date(post.scheduledFor) : startAt ? new Date(startAt) : null;
   const network = (platform: ContentPlatform): ComposerNetwork => {
     const own = post?.variants.find((item) => item.platform === platform);
     return {
@@ -97,7 +124,7 @@ function formFor(
       ? { draftId: null, name: post.media.name, kind: post.media.kind, bytes: post.media.bytes }
       : null,
     when: "later",
-    // A post with no time starts on tomorrow at 09:00.
+    // A post with no time starts on tomorrow at 09:00, or on the calendar day it was started from.
     date: at ? calendarDayOf(at, zone) : addCalendarDays(calendarDayOf(now, zone), 1),
     time: at ? clockOf(at, zone) : "09:00",
     networks: {
@@ -130,7 +157,11 @@ export function ContentComposer(props: ContentComposerProps) {
   // The form lives in the content state, so leaving the page and coming back keeps unsaved text.
   const session = untrack(() => props.content.state.composer?.session ?? 0);
   const kept = untrack(() => props.content.composerForm(session));
-  const first = kept?.initial ?? untrack(() => formFor(post(), networks(), props.content.now(), zone()));
+  const first =
+    kept?.initial ??
+    untrack(() =>
+      formFor(post(), networks(), props.content.now(), zone(), props.content.state.composer?.startAt ?? null),
+    );
   const [form, setForm] = kept ? [kept.form, kept.setForm] : createStore<ComposerForm>(structuredClone(first));
   if (!kept) props.content.keepComposerForm({ session, initial: first, form, setForm });
   /** The form as it was last saved or opened. */
@@ -138,10 +169,16 @@ export function ContentComposer(props: ContentComposerProps) {
   const [ui, setUi] = createStore<{
     busy: "save" | "main" | "media" | null;
     error: unknown;
+    /** The write that failed, so Retry runs it again and Close goes back to its button. */
+    failed: "save" | "main" | "publishNow" | null;
+    /** Why the last file was refused, as `sourceText` English. */
+    mediaError: string | null;
+    /** The dropped file while it is read. */
+    reading: { name: string; bytes: number | null } | null;
     /** The action that the user tried while the form was blocked; its reason shows in the footer. */
     attempt: "save" | "main" | null;
     confirm: "publishNow" | "discard" | null;
-  }>({ busy: null, error: null, attempt: null, confirm: null });
+  }>({ busy: null, error: null, failed: null, mediaError: null, reading: null, attempt: null, confirm: null });
   let root: HTMLElement | undefined;
   let heading: HTMLHeadingElement | undefined;
 
@@ -166,11 +203,13 @@ export function ContentComposer(props: ContentComposerProps) {
   };
 
   const textFor = (platform: ContentPlatform) => form.networks[platform].ownText ?? form.body;
+  const hostConfigured = () => props.content.state.accounts?.mediaHost?.configured === true;
   const rows = createMemo(() =>
     networks().map((network) => ({
       network,
       row: networkRow({
         network,
+        hostConfigured: hostConfigured(),
         chosen: form.networks[network.platform].chosen,
         text: textFor(network.platform),
         title: form.networks[network.platform].title,
@@ -313,26 +352,74 @@ export function ContentComposer(props: ContentComposerProps) {
   }
 
   /** One write at a time: a click while a write runs does nothing. */
-  async function run(kind: "save" | "main", work: () => Promise<ContentPostView>) {
+  async function run(
+    kind: "save" | "main",
+    work: () => Promise<ContentPostView>,
+    failed: "save" | "main" | "publishNow" = kind,
+  ) {
     if (ui.busy !== null || readOnly()) return;
     setUi((draft) => {
       draft.busy = kind;
       draft.error = null;
+      draft.failed = null;
     });
     try {
       props.content.remember(await work());
       props.onClose();
     } catch (error) {
-      // The form keeps every value.
+      // The form keeps every value. A refusal of the file shows at the media field.
+      // The IPC error keeps main's `sourceText` English at the end of its message.
+      const message = error instanceof Error ? error.message : String(error);
+      const media = mediaRefusals().find((refusal) => message.endsWith(refusal));
+      // The refused file is not kept: the field is empty again, so Choose can take focus.
+      const draftId = media ? form.media?.draftId : null;
+      if (draftId) {
+        void props.content.port().agent.discardDraftAttachment(draftId, LOCAL_SERVER_ID);
+        setForm((draft) => {
+          draft.media = null;
+        });
+      }
       setUi((draft) => {
-        draft.error = error;
+        draft.busy = null;
+        if (media) draft.mediaError = media;
+        else {
+          draft.error = error;
+          draft.failed = failed;
+        }
       });
+      flush();
+      if (media) focusChoose();
+      else {
+        const retry = root?.querySelector<HTMLElement>("#content-composer-retry");
+        retry?.scrollIntoView({ block: "nearest" });
+        retry?.focus();
+      }
     } finally {
       setUi((draft) => {
         draft.busy = null;
       });
     }
   }
+
+  /** Runs the failed write again. A publish now was confirmed already. */
+  function retryFailed() {
+    const failed = ui.failed;
+    if (failed === "save") saveDraft();
+    else if (failed === "publishNow") void publishNow();
+    else if (failed === "main") mainAction();
+  }
+
+  /** Closes the save alert and gives focus back to the button whose write failed. */
+  function closeError() {
+    const failed = ui.failed;
+    setUi((draft) => {
+      draft.error = null;
+      draft.failed = null;
+    });
+    root?.querySelector<HTMLElement>(failed === "save" ? "#content-composer-save" : "#content-composer-main")?.focus();
+  }
+
+  const focusChoose = () => root?.querySelector<HTMLElement>(".content-media .content-drop button")?.focus();
 
   /** Decision 5: Save draft saves the text and keeps the post as it is, also its time. */
   function saveDraft() {
@@ -375,12 +462,16 @@ export function ContentComposer(props: ContentComposerProps) {
   }
 
   async function publishNow() {
-    await run("main", async () => {
-      const api = props.content.port().content;
-      let saved = await save(null);
-      if (saved.approvalState === "pending") saved = await api.updatePost({ postId: saved.id, action: "approve" });
-      return api.publishNow({ postId: saved.id });
-    });
+    await run(
+      "main",
+      async () => {
+        const api = props.content.port().content;
+        let saved = await save(null);
+        if (saved.approvalState === "pending") saved = await api.updatePost({ postId: saved.id, action: "approve" });
+        return api.publishNow({ postId: saved.id });
+      },
+      "publishNow",
+    );
     setUi((draft) => {
       draft.confirm = null;
     });
@@ -413,36 +504,66 @@ export function ContentComposer(props: ContentComposerProps) {
     });
   }
 
-  async function attach(work: () => Promise<{ id: string; name: string; size: number; mimeType: string }[]>) {
+  /** Shows why the file was refused at the field; the field stays empty and Choose takes focus. */
+  function refuseMedia(refusal: string) {
+    setUi((draft) => {
+      draft.mediaError = refusal;
+    });
+    flush();
+    focusChoose();
+  }
+
+  async function attach(
+    work: () => Promise<{ id: string; name: string; size: number; mimeType: string }[]>,
+    reading: { name: string; bytes: number | null } | null = null,
+  ) {
     setUi((draft) => {
       draft.busy = "media";
-      draft.error = null;
+      draft.mediaError = null;
+      draft.reading = reading;
     });
+    let refusal: string | null = null;
     try {
-      useDraft((await work())[0]);
+      const attachment = (await work())[0];
+      // ponytail: a chosen file is checked by the type that main gave its draft, not by its bytes; main sniffs
+      // the bytes at save and its refusal shows here too. Read the head through main when that is not enough.
+      refusal = attachment ? mediaRefusal(attachment.mimeType, attachment.size) : null;
+      if (attachment && refusal) void props.content.port().agent.discardDraftAttachment(attachment.id, LOCAL_SERVER_ID);
+      else useDraft(attachment);
     } catch (error) {
-      setUi((draft) => {
-        draft.error = error;
-      });
+      refusal = errorMessage(error, sourceText("error.content.mediaCopyFailed"));
     } finally {
       setUi((draft) => {
         draft.busy = null;
+        draft.reading = null;
       });
     }
+    if (refusal) refuseMedia(refusal);
   }
 
   // ponytail: the picker offers images only (`filter: "images"`); offer "all" when YouTube video posts open.
   const chooseFile = () =>
     void attach(() => props.content.port().agent.chooseAttachments({ filter: "images" }, LOCAL_SERVER_ID));
-  const dropFile = (file: File) =>
-    void attach(async () =>
-      props.content
-        .port()
-        .agent.importAttachmentData(
-          [{ name: file.name, mimeType: file.type, bytes: new Uint8Array(await file.arrayBuffer()) }],
+  /** A dropped file is checked by its first bytes and its size before main keeps a draft of it. */
+  async function dropFile(file: File) {
+    const type = detectContentMediaType(new Uint8Array(await file.slice(0, 64).arrayBuffer()));
+    const refusal = mediaRefusal(type?.mimeType ?? null, file.size);
+    if (refusal) return refuseMedia(refusal);
+    await attach(
+      async () =>
+        props.content.port().agent.importAttachmentData(
+          [
+            {
+              name: file.name,
+              mimeType: type?.mimeType ?? file.type,
+              bytes: new Uint8Array(await file.arrayBuffer()),
+            },
+          ],
           LOCAL_SERVER_ID,
         ),
+      { name: file.name, bytes: file.size },
     );
+  }
 
   const title = () =>
     postId() === null
@@ -546,9 +667,11 @@ export function ContentComposer(props: ContentComposerProps) {
               labelledBy="content-composer-media"
               file={form.media}
               busy={ui.busy === "media"}
+              reading={ui.reading}
+              error={ui.mediaError ? errorMessage(ui.mediaError, t("content.error.saveFailed")) : undefined}
               disabled={readOnly()}
               onChoose={chooseFile}
-              onDrop={dropFile}
+              onDrop={(file) => void dropFile(file)}
               onRemove={() => {
                 const draftId = form.media?.draftId;
                 if (draftId) void props.content.port().agent.discardDraftAttachment(draftId, LOCAL_SERVER_ID);
@@ -617,6 +740,30 @@ export function ContentComposer(props: ContentComposerProps) {
           <h3 class="ui-label" id="content-composer-networks">
             {t("content.composer.networks")}
           </h3>
+          <Show when={props.content.state.accounts === null}>
+            <Show
+              when={props.content.state.accountsError}
+              fallback={
+                <div aria-busy="true">
+                  <p class="sr-only" role="status">
+                    {t("content.accounts.loading")}
+                  </p>
+                  <For each={[0, 1, 2]}>{() => <Skeleton class="content-skeleton-row" />}</For>
+                </div>
+              }
+            >
+              <Alert tone="danger" role="alert">
+                <AlertContent>
+                  <AlertDescription>{t("content.accounts.loadFailed")}</AlertDescription>
+                </AlertContent>
+                <AlertActions>
+                  <Button variant="outline" size="sm" onClick={() => void props.content.reloadAccounts()}>
+                    {t("common.retry")}
+                  </Button>
+                </AlertActions>
+              </Alert>
+            </Show>
+          </Show>
           <ul class="ui-item-group content-networks" aria-labelledby="content-composer-networks">
             <For each={rows()} keyed={(item) => item.network.platform}>
               {(item) => (
@@ -651,14 +798,15 @@ export function ContentComposer(props: ContentComposerProps) {
           </AlertContent>
           <AlertActions>
             <Button
+              id="content-composer-retry"
               variant="outline"
               size="sm"
-              onClick={() =>
-                setUi((draft) => {
-                  draft.error = null;
-                })
-              }
+              disabled={ui.busy !== null}
+              onClick={retryFailed}
             >
+              {t("common.retry")}
+            </Button>
+            <Button variant="outline" size="sm" onClick={closeError}>
               {t("common.close")}
             </Button>
           </AlertActions>
@@ -683,6 +831,7 @@ export function ContentComposer(props: ContentComposerProps) {
           {/* A post that a network already has cannot change: Retry is a queue action. */}
           <Show when={!readOnly()}>
             <Button
+              id="content-composer-save"
               variant="outline"
               size="sm"
               loading={ui.busy === "save"}
@@ -693,6 +842,7 @@ export function ContentComposer(props: ContentComposerProps) {
               {t("content.composer.saveDraft")}
             </Button>
             <Button
+              id="content-composer-main"
               size="sm"
               loading={ui.busy === "main"}
               disabled={ui.busy !== null && ui.busy !== "main"}
@@ -763,6 +913,8 @@ function ComposerNetworkRow(props: ComposerNetworkRowProps) {
         return t(contentGateKey(platform()));
       case "notConnected":
         return t("content.composer.notConnected");
+      case "needsHost":
+        return t("content.network.needsHost");
       case "needsVideo":
         return t("content.composer.needsVideo");
       case "imagesOnly":
@@ -799,6 +951,12 @@ function ComposerNetworkRow(props: ComposerNetworkRowProps) {
         <Show when={props.row.block === "notConnected"}>
           <Button variant="outline" size="xs" onClick={() => props.onConnect()}>
             {t("content.composer.connect")}
+          </Button>
+        </Show>
+        {/* Instagram is the only network with this block: the dialog opens on its image host fields. */}
+        <Show when={props.row.block === "needsHost"}>
+          <Button variant="outline" size="xs" onClick={() => props.onConnect()}>
+            {t("content.action.setUpHost")}
           </Button>
         </Show>
         <Show when={props.row.block === "unavailable"}>

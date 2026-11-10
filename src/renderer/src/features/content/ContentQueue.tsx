@@ -1,3 +1,4 @@
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   ContentAccountView,
   ContentPlatform,
@@ -5,6 +6,7 @@ import type {
   ContentVariantView,
 } from "@openbot/contracts/ipc-content";
 import type { AppTextKey } from "@openbot/i18n";
+import { sourceText } from "@openbot/i18n/source";
 import { addCalendarDays, calendarDayDate, calendarDayOf } from "@openbot/team-client/routine-calendar-dates";
 import { routineOnceInstant } from "@openbot/team-client/routine-schedule";
 import {
@@ -51,7 +53,7 @@ import type { RoutineCalendarAgent } from "@openbot/ui/features/conversation/Rou
 import { RoutineDateField } from "@openbot/ui/features/conversation/RoutineDateField";
 import { RoutineTimeField } from "@openbot/ui/features/conversation/RoutineTimeField";
 import { useText } from "@openbot/ui/text";
-import { createMemo, createSignal, createStore, For, Match, Show, Switch } from "solid-js";
+import { createMemo, createSignal, createStore, For, flush, Match, Show, Switch } from "solid-js";
 import type { ContentState } from "./content-context";
 
 const DONE_LIMIT = 5;
@@ -71,11 +73,27 @@ const isNamedSection = (section: ContentQueueSection): section is keyof typeof S
 type QueueConfirm =
   | { kind: "publishNow"; post: ContentPostView }
   | { kind: "delete"; post: ContentPostView }
-  | { kind: "retryUnknown"; post: ContentPostView; networks: ContentPlatform[] };
+  | { kind: "retryUnknown"; post: ContentPostView; networks: ContentPlatform[] }
+  /** Approve or schedule would skip Instagram, which has no image host. `run` is the action unchanged. */
+  | { kind: "needsHost"; post: ContentPostView; only: boolean; run: () => Promise<boolean> };
 
 export interface ContentQueueProps {
   content: ContentState;
   agents: readonly RoutineCalendarAgent[];
+}
+
+const hostConfigured = (content: ContentState) => content.state.accounts?.mediaHost?.configured === true;
+
+/** Instagram is in the post, and no image host is set up: approve and schedule would skip it. */
+function needsHost(content: ContentState, post: ContentPostView): boolean {
+  const instagram = content.state.accounts?.networks.find((network) => network.platform === "instagram");
+  return (
+    instagram?.available === true &&
+    !hostConfigured(content) &&
+    post.variants.some(
+      (variant) => variant.platform === "instagram" && (variant.status === "draft" || variant.status === "queued"),
+    )
+  );
 }
 
 /** The networks of `platforms` that can post this post now: available, connected, and the right file. */
@@ -88,6 +106,7 @@ function postable(content: ContentState, post: ContentPostView, platforms: reado
       network !== undefined &&
       networkRow({
         network,
+        hostConfigured: hostConfigured(content),
         chosen: true,
         text: variant?.body ?? post.body,
         title: variant?.title ?? "",
@@ -128,19 +147,52 @@ export function ContentQueue(props: ContentQueueProps) {
           timeZone: "UTC",
         });
 
-  /** The networks that signed the user out and still have queued posts. */
-  const signedOut = createMemo(() => {
-    const queued = new Set(
-      content()
-        .state.posts.flatMap((post) => post.variants)
-        .filter((variant) => variant.status === "queued")
-        .map((variant) => variant.platform),
+  /** The posts with a queued variant of each network. */
+  const queuedPosts = (platform: ContentPlatform) =>
+    content().state.posts.filter((post) =>
+      post.variants.some((variant) => variant.platform === platform && variant.status === "queued"),
     );
-    return (content().state.accounts?.networks ?? []).flatMap((network): ContentAccountView[] =>
-      // Expired only: a revoked account is one the user disconnected; its posts fail at their time.
-      network.account?.status === "expired" && queued.has(network.platform) ? [network.account] : [],
-    );
-  });
+
+  /**
+   * The accounts whose queued posts fail at their time: signed out (`expired`, G2) or disconnected by the
+   * user (`revoked`, G3). One banner per account.
+   */
+  const atRisk = createMemo(() =>
+    (content().state.accounts?.networks ?? []).flatMap((network): { account: ContentAccountView; count: number }[] => {
+      const account = network.account;
+      if (account?.status !== "expired" && account?.status !== "revoked") return [];
+      const count = queuedPosts(network.platform).length;
+      return count > 0 ? [{ account, count }] : [];
+    }),
+  );
+
+  /** G3: one `edit` per post skips the network; Undo takes it back as Restore does. */
+  async function skipNetwork(platform: ContentPlatform) {
+    const posts = queuedPosts(platform);
+    let skipped: ContentPostView[] = [];
+    for (const post of posts)
+      if (
+        await write(post.id, () =>
+          api().updatePost({ postId: post.id, action: "edit", variants: [{ platform, skipped: true }] }),
+        )
+      )
+        skipped = [...skipped, post];
+    if (skipped.length === 0) return;
+    flush();
+    document.querySelector<HTMLElement>(".content-queue .content-row :is(button, [tabindex])")?.focus();
+    toast(t("content.toast.networkSkipped", { network: CONTENT_NETWORK_NAMES[platform], count: skipped.length }), {
+      duration: TOAST_DURATION,
+      action: {
+        label: t("content.toast.undo"),
+        onClick: () => {
+          for (const post of skipped) void restore(post, [platform], true);
+        },
+      },
+    });
+  }
+
+  /** The accounts are not known: no empty state may claim there is no post or no account. */
+  const accountsUnknown = () => content().state.accounts === null;
 
   /** No connected or signed-out account. A revoked account counts as no account. */
   const noAccounts = () =>
@@ -200,9 +252,17 @@ export function ContentQueue(props: ContentQueueProps) {
    * shows Pick a time. Only a proposed time that has passed opens the composer for a new time. Undo is a
    * real reverse write: the post waits for approval again.
    */
-  async function approve(post: ContentPostView) {
+  async function approve(post: ContentPostView, checked = false) {
     if (postBadge(post, content().now()).timePassed) {
       content().openComposer(post);
+      return;
+    }
+    // Approve with a time queues the post, and Instagram with no image host would be skipped: ask first.
+    if (!checked && post.scheduledFor !== null && needsHost(content(), post)) {
+      void askNeedsHost(post, async () => {
+        await approve(post, true);
+        return true;
+      });
       return;
     }
     let approved: ContentPostView | undefined;
@@ -297,10 +357,40 @@ export function ContentQueue(props: ContentQueueProps) {
     });
   }
 
-  const closeConfirm = () =>
+  /** Settles the open needs-host confirm: true when the user ran the action. */
+  let settleNeedsHost: ((done: boolean) => void) | undefined;
+  /** Opens the needs-host confirm. Resolves when the user decides. */
+  function askNeedsHost(post: ContentPostView, run: () => Promise<boolean>): Promise<boolean> {
+    settleNeedsHost?.(false);
+    const only = post.variants.every(
+      (variant) => variant.platform === "instagram" || (variant.status !== "draft" && variant.status !== "queued"),
+    );
+    setView((draft) => {
+      draft.confirm = { kind: "needsHost", post, only, run };
+    });
+    return new Promise((resolve) => {
+      settleNeedsHost = resolve;
+    });
+  }
+
+  /** Pick a time queues the post: with no image host, Instagram asks first. */
+  const schedule = (post: ContentPostView, scheduledFor: string) => {
+    const run = () => write(post.id, () => api().schedulePost({ postId: post.id, scheduledFor }));
+    return needsHost(content(), post) ? askNeedsHost(post, run) : run();
+  };
+
+  const setUpHost = () => {
+    closeConfirm();
+    content().openAccounts("instagram");
+  };
+
+  const closeConfirm = () => {
+    settleNeedsHost?.(false);
+    settleNeedsHost = undefined;
     setView((draft) => {
       draft.confirm = null;
     });
+  };
 
   async function confirm() {
     const current = view.confirm;
@@ -313,6 +403,11 @@ export function ContentQueue(props: ContentQueueProps) {
         return undefined;
       });
       if (done) content().forget(current.post.id);
+    } else if (current.kind === "needsHost") {
+      if (current.only) return setUpHost();
+      const done = await current.run();
+      settleNeedsHost?.(done);
+      settleNeedsHost = undefined;
     } else await retry(current.post, true);
     closeConfirm();
   }
@@ -326,9 +421,10 @@ export function ContentQueue(props: ContentQueueProps) {
 
   return (
     <div class="content-queue">
-      <For each={signedOut()} keyed={(account) => account.id}>
+      <For each={atRisk()} keyed={(item) => item.account.id}>
         {(item) => {
-          const account = () => item();
+          const account = () => item().account;
+          const network = () => CONTENT_NETWORK_NAMES[account().platform];
           return (
             <Alert tone="warning" role="status">
               <AlertIcon>
@@ -336,24 +432,59 @@ export function ContentQueue(props: ContentQueueProps) {
               </AlertIcon>
               <AlertContent>
                 <AlertDescription>
-                  {t("content.banner.signedOut", {
-                    network: CONTENT_NETWORK_NAMES[account().platform],
-                    handle: account().handle,
-                  })}
+                  {account().status === "revoked"
+                    ? t("content.banner.disconnected", { network: network(), count: item().count })
+                    : // A full page can leave out older queued posts: then the count is not known.
+                      content().state.posts.length >= INPUT_LIMITS.contentPostsPage
+                      ? t("content.banner.signedOut", { network: network(), handle: account().handle })
+                      : t("content.banner.signedOutCount", {
+                          network: network(),
+                          handle: account().handle,
+                          count: item().count,
+                        })}
                 </AlertDescription>
               </AlertContent>
               <AlertActions>
-                <Button variant="outline" size="sm" onClick={() => content().openAccounts(account().platform)}>
-                  {t("content.banner.reconnect")}
-                </Button>
+                <Show
+                  when={account().status === "revoked"}
+                  fallback={
+                    <Button variant="outline" size="sm" onClick={() => content().openAccounts(account().platform)}>
+                      {t("content.banner.reconnect")}
+                    </Button>
+                  }
+                >
+                  <Button variant="outline" size="sm" onClick={() => content().openAccounts(account().platform)}>
+                    {t("content.banner.connect")}
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => void skipNetwork(account().platform)}>
+                    {t("content.banner.skipNetwork", { network: network() })}
+                  </Button>
+                </Show>
               </AlertActions>
             </Alert>
           );
         }}
       </For>
+      <Show when={content().state.accountsError && accountsUnknown()}>
+        <Alert tone="danger" role="alert">
+          <AlertContent>
+            <AlertDescription>{t("content.accounts.loadFailed")}</AlertDescription>
+          </AlertContent>
+          <AlertActions>
+            <Button variant="outline" size="sm" onClick={() => void content().reloadAccounts()}>
+              {t("common.retry")}
+            </Button>
+          </AlertActions>
+        </Alert>
+      </Show>
 
       <Switch>
-        <Match when={content().state.phase === "loading" && content().state.posts.length === 0}>
+        <Match
+          when={
+            content().state.posts.length === 0 &&
+            (content().state.phase === "loading" || (accountsUnknown() && !content().state.accountsError))
+          }
+        >
           <div class="content-queue-loading" aria-busy="true">
             <p class="sr-only" role="status">
               {t("content.queue.loading")}
@@ -382,6 +513,8 @@ export function ContentQueue(props: ContentQueueProps) {
             </AlertActions>
           </Alert>
         </Match>
+        {/* G7: with no accounts known, the load Alert above stands alone. */}
+        <Match when={content().state.posts.length === 0 && accountsUnknown()}>{null}</Match>
         <Match when={content().state.posts.length === 0}>
           <Show
             when={noAccounts()}
@@ -404,6 +537,18 @@ export function ContentQueue(props: ContentQueueProps) {
           </Show>
         </Match>
         <Match when={true}>
+          <Show when={content().state.phase === "error"}>
+            <Alert tone="danger" role="alert">
+              <AlertContent>
+                <AlertDescription>{t("content.error.reloadFailed")}</AlertDescription>
+              </AlertContent>
+              <AlertActions>
+                <Button variant="outline" size="sm" onClick={() => void content().reload()}>
+                  {t("common.retry")}
+                </Button>
+              </AlertActions>
+            </Alert>
+          </Show>
           {/* Keyed by section and by post, so a clock tick or a refresh keeps the rows, focus and menus. */}
           <For each={groups()} keyed={(group) => group.section}>
             {(group) => {
@@ -437,9 +582,9 @@ export function ContentQueue(props: ContentQueueProps) {
                           onRetry={() => void retry(post())}
                           onSkip={() => void skipPost(post())}
                           onRestore={() => void restore(post(), restorable(post()), false)}
-                          onSchedule={(scheduledFor) =>
-                            write(post().id, () => api().schedulePost({ postId: post().id, scheduledFor }))
-                          }
+                          needsHost={needsHost(content(), post())}
+                          onSetUpHost={() => content().openAccounts("instagram")}
+                          onSchedule={(scheduledFor) => schedule(post(), scheduledFor)}
                           onUnschedule={() =>
                             void write(post().id, () => api().updatePost({ postId: post().id, action: "unschedule" }))
                           }
@@ -503,6 +648,31 @@ export function ContentQueue(props: ContentQueueProps) {
         onConfirm={confirm}
       />
       <ConfirmDialog
+        open={view.confirm?.kind === "needsHost"}
+        tone="default"
+        icon={<TriangleAlert />}
+        initialFocus="cancel"
+        title={t("content.confirm.needsHost.title")}
+        description={
+          view.confirm?.kind === "needsHost" && view.confirm.only
+            ? t("content.confirm.needsHost.bodyOnly")
+            : t("content.confirm.needsHost.body")
+        }
+        confirmLabel={
+          view.confirm?.kind === "needsHost" && view.confirm.only
+            ? t("content.action.setUpHost")
+            : t("content.confirm.needsHost.action")
+        }
+        onCancel={closeConfirm}
+        onConfirm={confirm}
+      >
+        <Show when={view.confirm?.kind === "needsHost" && !view.confirm.only}>
+          <Button variant="link" onClick={setUpHost}>
+            {t("content.action.setUpHost")}
+          </Button>
+        </Show>
+      </ConfirmDialog>
+      <ConfirmDialog
         open={view.confirm?.kind === "retryUnknown"}
         tone="default"
         icon={<TriangleAlert />}
@@ -527,6 +697,9 @@ interface ContentQueueRowProps {
   busy: boolean;
   /** A skipped post has a network that can post it, so Restore can bring it back. */
   canRestore: boolean;
+  /** Instagram is in the post and no image host is set up (G13). */
+  needsHost: boolean;
+  onSetUpHost: () => void;
   onApprove: () => void;
   onEdit: () => void;
   onRetry: () => void;
@@ -542,7 +715,11 @@ interface ContentQueueRowProps {
 
 /** One post: time, title, the network chips and a note, the status, and the actions of its status. */
 function ContentQueueRow(props: ContentQueueRowProps) {
-  const { t, errorMessage } = useText();
+  const { t, format, errorMessage, sourceText: localized } = useText();
+  const processing = () =>
+    props.post.variants
+      .filter((variant) => variant.status === "publishing" && variant.pendingReason === "processing")
+      .map((variant) => variant.platform);
   const badge = () => postBadge(props.post, props.content.now());
   const title = () => contentPostTitle(props.post.body) || t("content.queue.untitled");
   const locked = () => contentPostLocked(props.post);
@@ -582,6 +759,7 @@ function ContentQueueRow(props: ContentQueueRowProps) {
   const menuItems = () => {
     const kind = badge().kind;
     const items: Array<{ key: AppTextKey; run: () => void; destructive?: boolean }> = [];
+    if (props.needsHost) items.push({ key: "content.action.setUpHost", run: props.onSetUpHost });
     if (kind === "pending") items.push({ key: "content.action.skipPost", run: props.onSkip });
     if (kind === "approved")
       items.push({ key: "common.edit", run: props.onEdit }, { key: "content.action.skipPost", run: props.onSkip });
@@ -629,6 +807,11 @@ function ContentQueueRow(props: ContentQueueRowProps) {
                     locked={locked()}
                     processing={variant().pendingReason === "processing"}
                     error={variant().error}
+                    warning={
+                      props.needsHost && variant().platform === "instagram" && variant().status !== "skipped"
+                        ? sourceText("error.content.instagramNeedsHost")
+                        : undefined
+                    }
                     onToggle={(included) => props.onToggle(variant(), included)}
                   />
                 )}
@@ -648,6 +831,18 @@ function ContentQueueRow(props: ContentQueueRowProps) {
             </Match>
             <Match when={badge().kind === "skipped"}>
               <span>{t("content.status.skipped")}</span>
+            </Match>
+            <Match when={props.needsHost}>
+              <span>{localized(sourceText("error.content.instagramNeedsHost"))}</span>
+            </Match>
+            <Match when={processing().length > 0}>
+              <span>
+                {format.list(
+                  processing().map((platform) =>
+                    t("content.variant.processingNote", { network: CONTENT_NETWORK_NAMES[platform] }),
+                  ),
+                )}
+              </span>
             </Match>
             <Match when={props.post.authorAgentId}>
               <Show when={author()} fallback={<span>{t("content.queue.byAgentGone")}</span>}>

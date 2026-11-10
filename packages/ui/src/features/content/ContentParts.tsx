@@ -10,10 +10,11 @@ import {
   LabelTooltipTrigger,
   RadialProgress,
   Text,
+  TriangleAlert,
   X,
 } from "@openbot/ui";
 import type { JSX } from "@solidjs/web";
-import { createSignal, Match, Show, Switch } from "solid-js";
+import { createSignal, createUniqueId, Match, Show, Switch } from "solid-js";
 import { useText } from "../../text";
 import { YouTubeMark } from "../settings/brand-marks";
 import { SocialNetworkMark } from "../social-follow/social-marks";
@@ -41,6 +42,8 @@ export interface ContentNetworkChipProps {
   processing?: boolean;
   /** The stored error of a failed network: `sourceText` English or provider text. It shows localized. */
   error?: string | null;
+  /** Why the network cannot post yet, as `sourceText` English. A triangle shows, and the chip stays a toggle. */
+  warning?: string;
   /** Skips the network (`false`) or takes it back (`true`). Only a toggle chip calls it. */
   onToggle?: (included: boolean) => void;
 }
@@ -50,7 +53,7 @@ export interface ContentNetworkChipProps {
  * chip is a status image with a label. A glyph or a dashed outline goes with each colour.
  */
 export function ContentNetworkChip(props: ContentNetworkChipProps) {
-  const { t, errorMessage } = useText();
+  const { t, errorMessage, sourceText } = useText();
   const chip = () => variantChip(props.status, props.locked);
   const network = () => CONTENT_NETWORK_NAMES[props.platform];
   const statusLabel = () =>
@@ -65,8 +68,12 @@ export function ContentNetworkChip(props: ContentNetworkChipProps) {
           reason: errorMessage(props.error, t("content.variant.failed")),
         })
       : statusLabel();
-  const toggleLabel = () =>
-    chip().pressed ? t("content.chip.skip", { network: network() }) : t("content.chip.include", { network: network() });
+  const toggleLabel = () => {
+    const label = chip().pressed
+      ? t("content.chip.skip", { network: network() })
+      : t("content.chip.include", { network: network() });
+    return props.warning ? t("content.chip.error", { label, reason: sourceText(props.warning) }) : label;
+  };
   const glyph = () => (
     <Switch>
       <Match when={chip().glyph === "clock"}>
@@ -110,6 +117,9 @@ export function ContentNetworkChip(props: ContentNetworkChipProps) {
           onClick={() => props.onToggle?.(!chip().pressed)}
         >
           <ContentNetworkMark platform={props.platform} />
+          <Show when={props.warning}>
+            <TriangleAlert class="content-chip-glyph content-chip-warning" aria-hidden="true" />
+          </Show>
         </LabelTooltipTrigger>
       </LabelTooltip>
     </Show>
@@ -177,6 +187,10 @@ export interface ContentMediaFieldProps {
   labelledBy: string;
   file: ContentMediaFieldFile | null;
   busy?: boolean;
+  /** While busy: the name and size of the file being read, for the status text. */
+  reading?: { name: string; bytes: number | null } | null;
+  /** Why the last file was refused. The field stays empty. */
+  error?: string;
   /** The post cannot change: no choose, drop or remove. */
   disabled?: boolean;
   /** Opens the file dialog of the platform. */
@@ -187,9 +201,19 @@ export interface ContentMediaFieldProps {
 }
 
 /** One image or video for the post: choose or drop a file; the chosen file shows with a remove button. */
+const LARGE_READ_BYTES = 100 * 1024 * 1024;
+
 export function ContentMediaField(props: ContentMediaFieldProps) {
   const { t, format } = useText();
   const [over, setOver] = createSignal(false);
+  const errorId = createUniqueId();
+  const readingText = () => {
+    const file = props.reading;
+    if (!props.busy || !file) return "";
+    return file.bytes !== null && file.bytes > LARGE_READ_BYTES
+      ? t("content.media.readingLarge", { name: file.name, size: format.fileSize(file.bytes) })
+      : t("content.media.reading", { name: file.name });
+  };
   const hasFiles = (event: DragEvent) => [...(event.dataTransfer?.items ?? [])].some((item) => item.kind === "file");
   return (
     <fieldset
@@ -206,6 +230,7 @@ export function ContentMediaField(props: ContentMediaFieldProps) {
             class="content-drop"
             aria-labelledby={props.labelledBy}
             data-over={over() ? "" : undefined}
+            data-invalid={props.error ? "" : undefined}
             onDragOver={(event) => {
               if (!hasFiles(event)) return;
               event.preventDefault();
@@ -222,10 +247,15 @@ export function ContentMediaField(props: ContentMediaFieldProps) {
           >
             <Image class="content-drop-icon" aria-hidden="true" />
             <span>
-              <Button variant="link" loading={props.busy} onClick={() => props.onChoose()}>
+              <Button
+                variant="link"
+                loading={props.busy}
+                aria-describedby={props.error ? errorId : undefined}
+                onClick={() => props.onChoose()}
+              >
                 {t("content.composer.mediaChoose")}
               </Button>{" "}
-              {t("content.composer.mediaDrop")}
+              <span role="status">{readingText() || t("content.composer.mediaDrop")}</span>
             </span>
           </section>
         }
@@ -251,6 +281,13 @@ export function ContentMediaField(props: ContentMediaFieldProps) {
               onClick={() => props.onRemove()}
             />
           </div>
+        )}
+      </Show>
+      <Show when={props.error}>
+        {(error) => (
+          <Text id={errorId} variant="caption" tone="danger" role="alert">
+            {error()}
+          </Text>
         )}
       </Show>
     </fieldset>

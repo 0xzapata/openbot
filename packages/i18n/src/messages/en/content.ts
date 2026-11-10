@@ -53,6 +53,8 @@ export const messages = defineMessages("content", {
   "content.variant.published": "Published",
   "content.variant.failed": "Failed",
   "content.variant.skipped": "Skipped",
+  "content.variant.processing": "Processing",
+  "content.variant.processingNote": "{network} is processing the media",
 
   // Row actions
   "content.action.approve": "Approve",
@@ -63,12 +65,17 @@ export const messages = defineMessages("content", {
   "content.action.publishNow": "Publish now",
   "content.pickTime.label": "Pick a time for {title}",
   "content.action.more": "More actions for {title}",
+  "content.action.setUpHost": "Set up image host",
 
   // Toasts
   "content.toast.skipped": "Post skipped",
   "content.toast.approved": "Approved for {time}",
   "content.toast.approvedNoTime": "Approved. Pick a time to schedule it.",
   "content.toast.undo": "Undo",
+  "content.toast.networkSkipped": {
+    one: "{network} skipped in {count} post",
+    other: "{network} skipped in {count} posts",
+  },
 
   // Confirm dialogs
   "content.confirm.publishNow.title": "Publish now?",
@@ -89,14 +96,31 @@ export const messages = defineMessages("content", {
   "content.confirm.disconnect.title": "Disconnect {network}?",
   "content.confirm.disconnect.body": "Scheduled posts for {handle} will fail until you connect it again.",
   "content.confirm.disconnect.action": "Disconnect",
+  "content.confirm.needsHost.title": "Instagram cannot post yet",
+  "content.confirm.needsHost.body":
+    "It needs an image host. Schedule this post for the other networks now, or set up the image host first.",
+  "content.confirm.needsHost.bodyOnly":
+    "It needs an image host, and it is the only network of this post. Set up the image host, then schedule the post.",
+  "content.confirm.needsHost.action": "Schedule without Instagram",
 
   // Banners and errors
-  "content.banner.signedOut": "{network} signed you out. Posts for {handle} wait until you sign in again.",
+  "content.banner.signedOut": "{network} signed you out. Sign in again, or posts for {handle} fail at their time.",
+  "content.banner.signedOutCount": {
+    one: "{network} signed you out. Sign in again, or {count} post for {handle} fails at its time.",
+    other: "{network} signed you out. Sign in again, or {count} posts for {handle} fail at their time.",
+  },
   "content.banner.reconnect": "Reconnect",
+  "content.banner.disconnected": {
+    one: "{network} is disconnected. {count} scheduled post for it fails at its time.",
+    other: "{network} is disconnected. {count} scheduled posts for it fail at their time.",
+  },
+  "content.banner.connect": "Connect",
+  "content.banner.skipNetwork": "Skip {network} in these posts",
   "content.error.loadFailed": "Could not load posts.",
   "content.error.saveFailed": "Could not save the post. Your text is still here.",
   "content.error.actionFailed": "Could not change the post.",
   "content.error.connectFailed": "Could not connect {network}.",
+  "content.error.reloadFailed": "Could not update the posts. The list may be out of date.",
 
   // Empty states
   "content.empty.title": "No posts yet",
@@ -110,6 +134,7 @@ export const messages = defineMessages("content", {
   "content.calendar.loadFailed": "Could not load the calendar.",
   "content.calendar.empty": "No scheduled posts in this range.",
   "content.calendar.dayEmpty": "No posts on this day.",
+  "content.calendar.newForDay": "New post for {day}",
   "content.calendar.upcoming": "Next posts",
   "content.calendar.upcomingEmpty": "Nothing is scheduled.",
   "content.calendar.entry": "{title}, {time}, {status}",
@@ -131,6 +156,8 @@ export const messages = defineMessages("content", {
   "content.composer.mediaImage": "Image · {size}",
   "content.composer.mediaVideo": "Video · {size}",
   "content.composer.mediaRemove": "Remove {name}",
+  "content.media.reading": "Reading {name}…",
+  "content.media.readingLarge": "Reading {name} ({size})… A large video takes a while.",
   "content.composer.networks": "Networks",
   "content.composer.left": { one: "{count} character left", other: "{count} characters left" },
   "content.composer.over": { one: "{count} character too many", other: "{count} characters too many" },
@@ -183,8 +210,7 @@ export const messages = defineMessages("content", {
   "content.accounts.clientIdHint": "From your app in the {network} developer portal.",
   "content.accounts.clientSecret": "{network} app client secret",
   "content.accounts.clientSecretHint": "OpenBot keeps it on this computer and does not show it again.",
-  // TODO(loupe): a network accepted the post and still processes it (YouTube video, Instagram or Threads container)
-  "content.variant.processing": "Processing",
+  "content.network.needsHost": "Needs an image host",
   "content.accounts.mediaHost.title": "Image host",
   "content.accounts.mediaHost.description":
     "Instagram takes an image only from a public address. OpenBot puts the image of each Instagram or Threads post in your Cloudflare R2 bucket while it posts, and removes it after.",

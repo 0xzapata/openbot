@@ -1416,6 +1416,46 @@ try {
     });
 
     await step(
+      "20b. Host gone while Instagram is queued: it fails at its time with no request; a later one waits; Retry publishes",
+      async () => {
+        const due = queued2("instagram", photo);
+        const later = queued2("instagram", photo);
+        const laterTime = new Date(clock.getTime() + 2 * 3_600_000);
+        content2.schedulePost(later.id, laterTime.toISOString(), clock);
+        // A restart whose saved host cannot be read: no host.
+        ({ store: content2, accounts2, publisher2 } = build());
+        assert.equal(accounts2.mediaHost(), null);
+        r2Log.length = 0;
+        const sentBefore = sent4.length;
+        await pass2();
+        assert.equal(variant2(due.id, "instagram").status, "queued", "Nothing is touched before its time.");
+        assert.equal(publisher2.nextDueAt(), due.time.toISOString(), "The queued variant is due at its time.");
+        clock = due.time;
+        await pass2();
+        const failed = variant2(due.id, "instagram");
+        assert.equal(failed.status, "failed");
+        assert.equal(failed.errorCode, "invalid");
+        assert.equal(failed.error, "Instagram needs an image host.");
+        assert.equal(variant2(later.id, "instagram").status, "queued", "A future variant is not touched.");
+        assert.equal(sent4.length - sentBefore + r2Log.length, 0, "No request to a network or the bucket.");
+        assert.equal(publisher2.nextDueAt(), laterTime.toISOString(), "The timer does not spin.");
+        await Effect.runPromise(accounts2.loadMediaHost());
+        content2.retryVariant(due.id, "instagram", clock);
+        answers.ig = "IN_PROGRESS";
+        await pass2();
+        assert.equal(variant2(due.id, "instagram").status, "publishing");
+        clock = new Date(clock.getTime() + 60_000);
+        answers.ig = "FINISHED";
+        await pass2();
+        const done = variant2(due.id, "instagram");
+        assert.equal(done.status, "published", done.error ?? "");
+        assert.equal(done.externalPostId, "ig-m1");
+        content2.unschedulePost(later.id, clock);
+        return { error: failed.error };
+      },
+    );
+
+    await step(
       "21. YouTube: publishing -> pending (processing) -> published across passes; no upload to the host",
       async () => {
         r2Log.length = 0;

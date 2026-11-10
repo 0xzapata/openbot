@@ -1,6 +1,7 @@
 import { LOCAL_SERVER_ID } from "@openbot/contracts/ipc";
 import type { ContentPostView } from "@openbot/contracts/ipc-content";
 import { Alert, AlertContent, AlertDescription, Button, Plus, SlidingTabs } from "@openbot/ui";
+import { contentNewPostTime } from "@openbot/ui/features/content/content-status";
 import { PostCalendar } from "@openbot/ui/features/content/PostCalendar";
 import type { RoutineCalendarAgent } from "@openbot/ui/features/conversation/RoutineCalendar";
 import { useText } from "@openbot/ui/text";
@@ -177,6 +178,9 @@ function ContentCalendar(props: { content: ContentState }) {
           if (post) props.content.openComposer(post);
         }}
         onNewPost={() => props.content.openComposer(null)}
+        onNewPostForDay={(day) =>
+          props.content.openComposer(null, contentNewPostTime(day, new Date(), props.content.timeZone))
+        }
         onRetry={() => void load()}
       />
     </div>

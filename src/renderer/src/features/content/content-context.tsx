@@ -22,6 +22,8 @@ export interface ContentComposerTarget {
   session: number;
   /** The post was deleted while the composer was open: the composer shows an error and writes nothing. */
   deleted: boolean;
+  /** The start time of a new post, as an instant; null takes tomorrow at 09:00. */
+  startAt: string | null;
 }
 
 /** The file of the post: the one it has, or a new attachment draft. */
@@ -217,11 +219,11 @@ export function createContentState(port: () => ContentPort, active: () => boolea
      * Opens the composer on a post, or on a new post. A composer with unsaved changes stays open: its own
      * Back asks before it discards them.
      */
-    openComposer(post: ContentPostView | null) {
+    openComposer(post: ContentPostView | null, startAt: string | null = null) {
       if (state.composer && composerDirty()) return;
       composerDraft = null;
       setState((draft) => {
-        draft.composer = { postId: post?.id ?? null, post, session: ++sessions, deleted: false };
+        draft.composer = { postId: post?.id ?? null, post, session: ++sessions, deleted: false, startAt };
       });
     },
     /** The new post of the composer now has an id: later writes edit it and never create a second post. */

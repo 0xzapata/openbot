@@ -10,7 +10,13 @@ import type {
 } from "@openbot/contracts/ipc-content";
 import { CONTENT_PLATFORMS, contentTextLength } from "@openbot/contracts/ipc-content";
 import type { AppTextKey } from "@openbot/i18n";
-import { addCalendarDays, type CalendarDay, calendarDayOf } from "@openbot/team-client/routine-calendar-dates";
+import {
+  addCalendarDays,
+  type CalendarDay,
+  calendarDayOf,
+  calendarHourOf,
+} from "@openbot/team-client/routine-calendar-dates";
+import { routineOnceInstant } from "@openbot/team-client/routine-schedule";
 
 /** The brand names of the networks. They are not translated. */
 export const CONTENT_NETWORK_NAMES: { readonly [platform in ContentPlatform]: string } = {
@@ -202,7 +208,7 @@ export function queueSections<T extends ContentPostView>(
 }
 
 /** Why a network cannot be chosen in the composer. Null: it can. */
-export type ContentNetworkBlock = "unavailable" | "notConnected" | "needsVideo" | "imagesOnly" | null;
+export type ContentNetworkBlock = "unavailable" | "notConnected" | "needsHost" | "needsVideo" | "imagesOnly" | null;
 /** What stops a chosen network. The first one is the footer reason. */
 export type ContentNetworkIssue = "overLimit" | "needsImage" | "noTitle";
 
@@ -218,6 +224,8 @@ export interface ContentNetworkRow {
 /** The network row rules of the composer (docs/content-manager/ux.md section 3, S3). */
 export function networkRow(input: {
   network: Pick<ContentNetworkView, "platform" | "available" | "account">;
+  /** An image host is set up (`ContentAccountsState.mediaHost.configured`). Instagram needs one. */
+  hostConfigured: boolean;
   chosen: boolean;
   /** The text this network posts: its own text, or the main text. */
   text: string;
@@ -235,6 +243,8 @@ export function networkRow(input: {
   if (!input.network.available) return row("unavailable");
   const account = input.network.account;
   if (!account || account.status === "revoked") return row("notConnected");
+  // Connect already collects the host, so a network that is not connected says that first.
+  if (input.network.platform === "instagram" && !input.hostConfigured) return row("needsHost");
   if (input.media !== null && input.media !== rules.media)
     return row(rules.media === "video" ? "needsVideo" : "imagesOnly");
   // A video network with no video cannot be chosen; an image network with no image can, and blocks (Instagram).
@@ -251,4 +261,17 @@ export function networkRow(input: {
 /** The Instagram gate of v1 is Meta app review; YouTube waits for Google verification. */
 export function contentGateKey(platform: ContentPlatform): "content.gate.meta" | "content.gate.google" {
   return platform === "youtube" ? "content.gate.google" : "content.gate.meta";
+}
+
+/** The start time of a post made from an empty calendar day: 09:00 in the zone, or the next full hour once that has passed. */
+export function contentNewPostTime(day: CalendarDay, now: Date, timeZone: string): string {
+  const nine = routineOnceInstant({ kind: "once", date: day, time: "09:00" }, timeZone);
+  if (nine.getTime() > now.getTime()) return nine.toISOString();
+  const today = calendarDayOf(now, timeZone);
+  const hour = calendarHourOf(now, timeZone) + 1;
+  const next =
+    hour === 24
+      ? { date: addCalendarDays(today, 1), time: "00:00" }
+      : { date: today, time: `${String(hour).padStart(2, "0")}:00` };
+  return routineOnceInstant({ kind: "once", ...next }, timeZone).toISOString();
 }

@@ -21,6 +21,7 @@ import {
 import { en } from "@openbot/i18n";
 import {
   CONTENT_STATUS_LABEL,
+  contentNewPostTime,
   contentPostLocked,
   networkRow,
   postBadge,
@@ -326,6 +327,7 @@ try {
         text?: string;
         title?: string;
         media?: "image" | "video" | null;
+        host?: boolean;
       } = {},
     ) =>
       networkRow({
@@ -334,6 +336,7 @@ try {
           options.account === undefined ? "connected" : options.account,
           options.available ?? true,
         ),
+        hostConfigured: options.host ?? true,
         chosen: options.chosen ?? true,
         text: options.text ?? "Hello",
         title: options.title ?? "",
@@ -342,6 +345,11 @@ try {
     assert.equal(row("instagram", { available: false }).block, "unavailable");
     assert.equal(row("x", { account: null }).block, "notConnected");
     assert.equal(row("x", { account: "revoked" }).block, "notConnected");
+    // G13: Instagram with no image host is blocked after the account check; no other network is.
+    assert.equal(row("instagram", { host: false, media: "image" }).block, "needsHost");
+    assert.equal(row("instagram", { host: false, account: null }).block, "notConnected");
+    assert.equal(row("instagram", { host: false, chosen: false }).block, "needsHost");
+    assert.equal(row("threads", { host: false, media: "image" }).block, null);
     // A signed-out account can still be chosen: the queue shows the banner, and publish fails until sign-in.
     assert.equal(row("x", { account: "expired" }).block, null);
     assert.equal(row("youtube", { media: "image" }).block, "needsVideo");
@@ -359,6 +367,20 @@ try {
     assert.deepEqual([link.issues, link.length], [[], 27]);
     // A network that is not chosen shows no issue.
     assert.deepEqual(row("instagram", { chosen: false }).issues, []);
+  });
+
+  step("7. A post from an empty calendar day starts at 09:00, or at the next full hour once that has passed", () => {
+    // NOW is 10:00 in Warsaw (UTC+1 in November).
+    assert.equal(contentNewPostTime("2026-11-12", NOW, ZONE), "2026-11-12T08:00:00.000Z");
+    assert.equal(contentNewPostTime("2026-11-10", NOW, ZONE), "2026-11-10T10:00:00.000Z");
+    assert.equal(
+      contentNewPostTime("2026-11-10", new Date("2026-11-10T07:30:00.000Z"), ZONE),
+      "2026-11-10T08:00:00.000Z",
+    );
+    assert.equal(
+      contentNewPostTime("2026-11-10", new Date("2026-11-10T22:30:00.000Z"), ZONE),
+      "2026-11-10T23:00:00.000Z",
+    );
   });
 
   report.passed = report.steps.every((entry) => entry.passed);

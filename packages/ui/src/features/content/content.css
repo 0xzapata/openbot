@@ -49,6 +49,11 @@
   color: var(--openbot-danger-text);
 }
 
+/* A network that cannot post yet (Instagram with no image host): the triangle carries it, not colour alone. */
+.content-chip .content-chip-warning {
+  color: var(--openbot-warning-text);
+}
+
 /* Character count: a small ring and its line. */
 .content-count {
   display: inline-flex;
@@ -106,6 +111,10 @@
 .content-drop[data-over] {
   border-color: var(--openbot-accent);
   background: var(--openbot-accent-soft);
+}
+
+.content-drop[data-invalid] {
+  border-color: var(--openbot-danger-border);
 }
 
 .content-drop .content-drop-icon {

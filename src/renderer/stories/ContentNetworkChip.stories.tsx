@@ -36,6 +36,14 @@ export const States: Story = {
   ),
 };
 
+/** Instagram with no image host: a triangle, and the reason in the label and tooltip. The chip stays a toggle. */
+export const NeedsHost: Story = {
+  args: { platform: "instagram", status: "draft", warning: "Instagram needs an image host.", onToggle: fn() },
+};
+
+/** A network that accepted the post and still processes the media: the clock and "Processing". */
+export const Processing: Story = { args: { platform: "youtube", status: "publishing", processing: true } };
+
 /** A post that a network already has: no chip is a toggle. */
 export const Locked: Story = { args: { platform: "linkedin", status: "draft", locked: true } };
 

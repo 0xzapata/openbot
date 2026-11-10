@@ -70,7 +70,7 @@ export class ContentPublisher implements RoutineDueSource {
   }
 
   nextDueAt(): string | null {
-    return this.#store.nextDueAt(this.#accounts.platforms);
+    return this.#store.nextDueAt(this.#accounts.adapterPlatforms);
   }
 
   readonly processDue = Effect.fn("ContentPublisher.processDue")(function* (
@@ -79,7 +79,7 @@ export class ContentPublisher implements RoutineDueSource {
     active: () => boolean,
   ) {
     const due = yield* Effect.try({
-      try: () => this.#store.dueVariants(now, this.#accounts.platforms, PASS_LIMIT),
+      try: () => this.#store.dueVariants(now, this.#accounts.adapterPlatforms, PASS_LIMIT),
       catch: (cause) => ({ cause }),
     });
     for (const item of due) {
@@ -177,6 +177,14 @@ export class ContentPublisher implements RoutineDueSource {
         kind: "failed",
         code: "server",
         message: sourceText("error.content.mediaHostCleanup"),
+      });
+
+    // Decision B: Instagram with no image host fails at its time, before any request. Retry works after setup.
+    if (platform === "instagram" && !this.#accounts.mediaHost())
+      return this.#finish(variant.id, {
+        kind: "failed",
+        code: "invalid",
+        message: sourceText("error.content.instagramNeedsHost"),
       });
 
     const body = variant.body ?? item.postBody;
