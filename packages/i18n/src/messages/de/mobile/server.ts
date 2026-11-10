@@ -1267,7 +1267,7 @@ export const messages = {
   "mobile.server.update.reason.browserControl": "Browsersteuerung durch einen Agenten",
   "mobile.server.update.reason.updateOperation": "einen weiteren Update-Schritt",
   "mobile.server.update.reason.initialization": "den Start von OpenBot",
-  "mobile.server.update.reason.contentPost": "einen Beitrag, der veröffentlicht wird",
+  "mobile.server.update.reason.contentPost": "die Veröffentlichung eines Beitrags",
   "mobile.server.update.reason.other": "andere Aufgaben",
   "mobile.server.update.actionFailed": "Die Serveraktion ist fehlgeschlagen.",
   "mobile.server.update.unavailable": "Verbinde dich mit diesem Server, um seine OpenBot-Updates zu sehen.",
