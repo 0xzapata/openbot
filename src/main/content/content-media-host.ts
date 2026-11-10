@@ -10,7 +10,7 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { sourceText } from "@openbot/i18n/source";
 import { createOpenBotLogger } from "@openbot/logging";
-import { Effect, Schema } from "effect";
+import { Effect, Exit, Schema } from "effect";
 import { CONTENT_UPLOAD_TIMEOUT_MS, ContentAdapterError, type ContentFetch, contentRequest } from "./content-adapter";
 
 const logger = createOpenBotLogger("content-media-host");
@@ -224,9 +224,11 @@ export class R2MediaHost implements ContentMediaHost {
             status: put._tag === "Failure" ? "no answer" : String(put.success.status),
           }),
         });
-      const read = yield* Effect.tryPromise(async () => {
+      const read = yield* Effect.tryPromise(async (interrupted) => {
         // A plain GET with no credentials, as Meta reads it.
-        const response = await this.#fetch(this.publicUrl(key), { signal: AbortSignal.timeout(30_000) });
+        const response = await this.#fetch(this.publicUrl(key), {
+          signal: AbortSignal.any([interrupted, AbortSignal.timeout(30_000)]),
+        });
         return { status: response.status, body: response.ok ? new Uint8Array(await response.arrayBuffer()) : null };
       }).pipe(Effect.orElseSucceed(() => ({ status: 0, body: null })));
       if (read.status !== 200 || !read.body)
@@ -242,9 +244,9 @@ export class R2MediaHost implements ContentMediaHost {
           message: sourceText("error.content.mediaHostBytesDiffer"),
         });
     });
-    // Removed on success and on failure. A failed upload made no object, so its DELETE finds none. A failed
-    // DELETE leaves the probe file in the bucket: the log names it. The field is `object`, because the
-    // logger hides a field named `key`.
+    // Removed on success, on failure and after a stop. A failed upload made no object, so its DELETE finds
+    // none. A failed DELETE leaves the probe file in the bucket: the log names it. The field is `object`,
+    // because the logger hides a field named `key`.
     const removeProbe = this.remove(key).pipe(
       Effect.catch((error) =>
         Effect.sync(() =>
@@ -252,7 +254,15 @@ export class R2MediaHost implements ContentMediaHost {
         ),
       ),
     );
-    yield* check.pipe(Effect.ensuring(removeProbe));
+    // A stopped check (cancel or time limit) ends at once. Its DELETE runs in its own fiber, so the stop
+    // does not abort that request too.
+    yield* check.pipe(
+      Effect.onExit((exit) =>
+        Exit.hasInterrupts(exit)
+          ? Effect.asVoid(Effect.forkDetach(removeProbe, { startImmediately: true }))
+          : removeProbe,
+      ),
+    );
   });
 }
 

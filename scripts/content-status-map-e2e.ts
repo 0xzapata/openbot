@@ -76,6 +76,7 @@ function post(input: {
       status,
       attempt: 0,
       externalPostId: null,
+      externalUrl: null,
       errorCode: null,
       error: null,
       publishedAt: status === "published" ? (input.publishedAt ?? created) : null,

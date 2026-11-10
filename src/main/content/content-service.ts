@@ -22,6 +22,7 @@ import {
   type ContentDisconnectInput,
   type ContentListPostsInput,
   type ContentMedia,
+  type ContentMediaHostInput,
   type ContentMediaInput,
   type ContentMediaView,
   type ContentPlatform,
@@ -114,6 +115,7 @@ export function contentPostView(post: ContentPost): ContentPostView {
       status: variant.status,
       attempt: variant.attempt,
       externalPostId: variant.externalPostId,
+      externalUrl: variant.externalUrl,
       errorCode: variant.errorCode,
       error: variant.error,
       publishedAt: variant.publishedAt,
@@ -229,28 +231,36 @@ export class ContentService {
     const clientSecret = input.clientSecret ?? saved?.clientSecret ?? null;
     if (NEEDS_SECRET.has(input.platform) && !clientSecret)
       return yield* refuse(sourceText("error.content.addSecret", { network }));
-    // The host is checked and saved first: Instagram cannot post without it.
-    if (input.mediaHost) {
-      // A recorded key does not name its bucket, so its object is removed from the current host before
-      // the host changes. While one stays, nothing is saved: the new host would never find that object.
-      if (this.#accounts.mediaHost()) {
-        yield* this.#releaseHostedMedia(null);
-        if (yield* storeCall(() => this.#store.hasHostedKeys()))
-          return yield* refuse(sourceText("error.content.mediaHostCleanup"));
-      }
-      yield* this.#accounts.saveMediaHost(input.mediaHost).pipe(Effect.mapError(failure));
-      // New host values for a connected account and no new app values: saved, and no new sign-in.
-      if (
-        this.#store.connectedAccount(input.platform) &&
-        input.clientId === undefined &&
-        input.clientSecret === undefined
-      )
-        return yield* this.listAccounts();
-    } else if (input.platform === "instagram" && !this.#accounts.mediaHost())
+    if (input.platform === "instagram" && !this.#accounts.mediaHost())
       return yield* refuse(sourceText("error.content.instagramNeedsHost"));
     if (input.clientId !== undefined || input.clientSecret !== undefined)
       yield* this.#accounts.setApp(input.platform, { clientId, clientSecret }).pipe(Effect.mapError(failure));
     yield* this.#accounts.connect(input.platform).pipe(Effect.mapError(failure));
+    return yield* this.listAccounts();
+  });
+
+  /**
+   * Checks the image host and saves it. It needs no network app and no sign-in. Ends when the check ends:
+   * it passes, fails, is cancelled, or 60 seconds pass.
+   */
+  readonly saveMediaHost = Effect.fn("ContentService.saveMediaHost")(function* (
+    this: ContentService,
+    input: ContentMediaHostInput,
+  ) {
+    // A recorded key does not name its bucket, so its object is removed from the current host before the
+    // host changes. While one stays, nothing is saved: the new host would never find that object.
+    if (this.#accounts.mediaHost()) {
+      yield* this.#releaseHostedMedia(null);
+      if (yield* storeCall(() => this.#store.hasHostedKeys()))
+        return yield* refuse(sourceText("error.content.mediaHostCleanup"));
+    }
+    yield* this.#accounts.saveMediaHost(input).pipe(Effect.mapError(failure));
+    return yield* this.listAccounts();
+  });
+
+  /** Stops the image host check that runs. Its save ends with `mediaHostCancelled`, and nothing is saved. */
+  readonly cancelMediaHostCheck = Effect.fn("ContentService.cancelMediaHostCheck")(function* (this: ContentService) {
+    this.#accounts.cancelMediaHostCheck();
     return yield* this.listAccounts();
   });
 

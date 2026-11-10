@@ -9,6 +9,7 @@ import {
   parseContentDeletePost,
   parseContentDisconnect,
   parseContentListPosts,
+  parseContentMediaHost,
   parseContentPublishNow,
   parseContentSchedulePost,
   parseContentUpdatePost,
@@ -140,7 +141,7 @@ describe("content payloads from the renderer", () => {
     expect(() => parseContentBeginConnect({ platform: "x", redirectUri: "https://evil.example" })).toThrow();
   });
 
-  it("parses an Instagram image host and refuses unsafe URLs, bad buckets and other networks", () => {
+  it("parses an image host with no network, and refuses unsafe URLs and bad buckets", () => {
     const mediaHost = {
       endpoint: "https://account.r2.example.test",
       bucket: "content-bucket",
@@ -148,14 +149,9 @@ describe("content payloads from the renderer", () => {
       accessKeyId: "access",
       secretAccessKey: "secret",
     };
-    expect(parseContentBeginConnect({ platform: "instagram", mediaHost })).toEqual({
-      platform: "instagram",
-      mediaHost: { ...mediaHost, publicBaseUrl: "https://pub.example.test" },
-    });
+    expect(parseContentMediaHost(mediaHost)).toEqual({ ...mediaHost, publicBaseUrl: "https://pub.example.test" });
     const { accessKeyId: _id, secretAccessKey: _secret, ...noKeys } = mediaHost;
-    expect(parseContentBeginConnect({ platform: "instagram", mediaHost: noKeys }).mediaHost).not.toHaveProperty(
-      "accessKeyId",
-    );
+    expect(parseContentMediaHost(noKeys)).not.toHaveProperty("accessKeyId");
     for (const bad of [
       { endpoint: "http://account.r2.example.test" },
       { endpoint: "https://user:pass@account.r2.example.test" },
@@ -168,9 +164,11 @@ describe("content payloads from the renderer", () => {
       { accessKeyId: "" },
       { secretAccessKey: "x".repeat(INPUT_LIMITS.mcpClientSecret + 1) },
       { region: "auto" },
+      { platform: "instagram" },
     ])
-      expect(() => parseContentBeginConnect({ platform: "instagram", mediaHost: { ...mediaHost, ...bad } })).toThrow();
-    expect(() => parseContentBeginConnect({ platform: "threads", mediaHost })).toThrow();
+      expect(() => parseContentMediaHost({ ...mediaHost, ...bad })).toThrow();
+    // The sign-in no longer carries the host.
+    expect(() => parseContentBeginConnect({ platform: "instagram", mediaHost })).toThrow();
   });
 
   it("parses a disconnect or a cancel, never both", () => {

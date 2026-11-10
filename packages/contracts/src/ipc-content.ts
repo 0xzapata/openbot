@@ -7,6 +7,16 @@ export type ContentPlatform = (typeof CONTENT_PLATFORM_KEYS)[number];
 
 export type ContentMediaKind = "image" | "video";
 
+/**
+ * The address that every network sends the sign-in back to. X and LinkedIn compare the registered
+ * callback exactly, so the port is fixed. 28417 is the MCP listener. LinkedIn asks for https redirect
+ * addresses in its documents: whether it takes `http://127.0.0.1` is not confirmed, and the user must
+ * test it when they register the app.
+ */
+export const CONTENT_REDIRECT_PORT = 28_418;
+export const CONTENT_REDIRECT_PATH = "/content-auth";
+export const CONTENT_REDIRECT_URI = `http://127.0.0.1:${CONTENT_REDIRECT_PORT}${CONTENT_REDIRECT_PATH}`;
+
 export interface ContentPlatformRules {
   /** The longest text, in the units of `contentTextLength`. For YouTube, the description. */
   textLimit: number;
@@ -68,6 +78,8 @@ export interface ContentVariant {
   status: ContentVariantStatus;
   attempt: number;
   externalPostId: string | null;
+  /** The https link that the network returned for the published post. Null when it returned none. */
+  externalUrl: string | null;
   errorCode: string | null;
   error: string | null;
   publishedAt: string | null;
@@ -370,8 +382,6 @@ export interface ContentBeginConnectInput {
   platform: ContentPlatform;
   clientId?: string;
   clientSecret?: string;
-  /** Only for Instagram: main checks the host, saves it, then signs in. */
-  mediaHost?: ContentMediaHostInput;
 }
 
 export interface ContentDisconnectInput {
@@ -423,6 +433,7 @@ const VARIANT_KEYS = [
   "status",
   "attempt",
   "externalPostId",
+  "externalUrl",
   "errorCode",
   "error",
   "publishedAt",
@@ -445,6 +456,7 @@ export function isContentVariantView(value: unknown): value is ContentVariantVie
     isContentVariantStatus(value.status) &&
     isNumber(value.attempt) &&
     isNullableString(value.externalPostId) &&
+    isNullableString(value.externalUrl) &&
     isNullableString(value.errorCode) &&
     isNullableString(value.error) &&
     isNullableString(value.publishedAt) &&

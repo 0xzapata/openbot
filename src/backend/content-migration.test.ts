@@ -1,12 +1,14 @@
 // @vitest-environment node
 import { DatabaseSync } from "node:sqlite";
+import { isDynamicRecord } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it } from "vitest";
 import { migrateOpenBotDatabase } from "./openbot-database-schema";
 
 // Failure modes: the upgrade changes or loses a row of any table; a failed upgrade leaves a content table
 // or its marker; a newer or incomplete history is accepted; deleting a post leaves its variants; deleting
 // an account deletes its variants instead of unbinding them; a post gets two variants of one platform.
-// These fixtures cover each.
+// These fixtures cover each. Migration 61 adds the link column of a variant: it must keep every content row
+// and give each one a null link, and a failed run must leave no column and no marker.
 const databases: DatabaseSync[] = [];
 afterEach(() => {
   for (const db of databases.splice(0)) db.close();
@@ -72,7 +74,7 @@ function contentObjects(db: DatabaseSync) {
 }
 
 function expectHealthy(db: DatabaseSync): void {
-  expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 60 });
+  expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 61 });
   expect(db.prepare("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
   expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
   expect(db.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
@@ -104,6 +106,40 @@ function insertVariant(
   db.prepare(`INSERT INTO content_variants
     (variant_id, post_id, platform, account_id, status, created_at, updated_at, last_event_sequence)
     VALUES (?, ?, ?, ?, 'draft', '2026-01-04', '2026-01-04', 4)`).run(variantId, postId, platform, accountId);
+}
+
+/** Content rows of schema 60: an account, two posts, and a published, a failed and a waiting variant. */
+function seedContent(db: DatabaseSync): void {
+  insertAccount(db, "account-1");
+  insertPost(db, "post-1");
+  insertPost(db, "post-2");
+  db.prepare(`INSERT INTO content_variants
+    (variant_id, post_id, platform, account_id, body, status, attempt, pending_data, external_post_id, error_code, error,
+     published_at, created_at, updated_at, last_event_sequence)
+    VALUES
+      ('variant-1', 'post-1', 'x', 'account-1', 'Own 界', 'published', 1, NULL, '1001', NULL, NULL, '2026-01-05',
+       '2026-01-04', '2026-01-05', 5),
+      ('variant-2', 'post-1', 'linkedin', NULL, NULL, 'failed', 2, NULL, NULL, 'rejected', 'LinkedIn refused "it"',
+       NULL, '2026-01-04', '2026-01-05', 6),
+      ('variant-3', 'post-2', 'instagram', 'account-1', NULL, 'publishing', 1,
+       '{"checkAt":"2026-01-06","data":"container-1","hostedKey":"t/abc.jpg","reason":"processing"}', NULL, NULL, NULL,
+       NULL, '2026-01-04', '2026-01-05', 7)`).run();
+}
+
+function hasUrlColumn(db: DatabaseSync): boolean {
+  return db
+    .prepare("PRAGMA table_info(content_variants)")
+    .all()
+    .some((column) => column.name === "external_url");
+}
+
+/** The rows after migration 61: the same, and each variant has a null link. */
+function withNullLinks(before: Record<string, unknown[]>): Record<string, unknown[]> {
+  const variants = before.content_variants ?? [];
+  return {
+    ...before,
+    content_variants: variants.map((row) => (isDynamicRecord(row) ? { ...row, external_url: null } : row)),
+  };
 }
 
 describe("content migration", () => {
@@ -150,9 +186,9 @@ describe("content migration", () => {
     const db = databaseAt(59);
     seed(db);
     const before = contents(db);
-    db.exec("INSERT INTO schema_migrations VALUES(61,'now')");
+    db.exec("INSERT INTO schema_migrations VALUES(62,'now')");
     expect(() => migrateOpenBotDatabase(db)).toThrow("newer than this application supports");
-    db.exec("DELETE FROM schema_migrations WHERE version=61; DELETE FROM schema_migrations WHERE version=20");
+    db.exec("DELETE FROM schema_migrations WHERE version=62; DELETE FROM schema_migrations WHERE version=20");
     expect(() => migrateOpenBotDatabase(db)).toThrow("missing version 20");
     expect(contents(db)).toEqual(before);
     expect(contentObjects(db)).toEqual([]);
@@ -208,5 +244,59 @@ describe("content migration", () => {
         .run(),
     ).toThrow("CHECK constraint failed");
     expectHealthy(db);
+  });
+
+  it("preserves every row from schema 60 and gives each variant a null link", () => {
+    const db = databaseAt(60);
+    seed(db);
+    seedContent(db);
+    const before = contents(db);
+    expect(hasUrlColumn(db)).toBe(false);
+    migrateOpenBotDatabase(db);
+    expect(contents(db)).toEqual(withNullLinks(before));
+    expect(contentObjects(db)).toEqual(CONTENT_OBJECTS);
+    expectHealthy(db);
+  });
+
+  it.each([8, 40, 58, 59])("preserves every content row from released schema %i through migration 61", (version) => {
+    const db = databaseAt(version);
+    migrateUpTo(db, 60);
+    seed(db);
+    seedContent(db);
+    const before = contents(db);
+    migrateOpenBotDatabase(db);
+    expect(contents(db)).toEqual(withNullLinks(before));
+    expectHealthy(db);
+  });
+
+  it("rolls back the link column and the marker after a late failure at 61, then retries", () => {
+    const db = databaseAt(60);
+    seed(db);
+    seedContent(db);
+    const before = contents(db);
+    db.exec(`CREATE TEMP TRIGGER fail_marker BEFORE INSERT ON schema_migrations WHEN new.version=61
+      BEGIN SELECT RAISE(ABORT, 'late failure'); END;`);
+    expect(() => migrateOpenBotDatabase(db)).toThrow("migration to version 61 failed");
+    expect(contents(db)).toEqual(before);
+    expect(hasUrlColumn(db)).toBe(false);
+    expect(db.prepare("SELECT version FROM schema_migrations WHERE version=61").all()).toEqual([]);
+    expect(db.prepare("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
+    db.exec("DROP TRIGGER fail_marker");
+    migrateOpenBotDatabase(db);
+    expect(contents(db)).toEqual(withNullLinks(before));
+    expectHealthy(db);
+  });
+
+  it("rejects newer and incomplete histories from schema 60 before it adds the link column", () => {
+    const db = databaseAt(60);
+    seed(db);
+    seedContent(db);
+    const before = contents(db);
+    db.exec("INSERT INTO schema_migrations VALUES(62,'now')");
+    expect(() => migrateOpenBotDatabase(db)).toThrow("newer than this application supports");
+    db.exec("DELETE FROM schema_migrations WHERE version=62; DELETE FROM schema_migrations WHERE version=20");
+    expect(() => migrateOpenBotDatabase(db)).toThrow("missing version 20");
+    expect(contents(db)).toEqual(before);
+    expect(hasUrlColumn(db)).toBe(false);
   });
 });

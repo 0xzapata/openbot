@@ -100,6 +100,9 @@ export const messages = defineMessages("error.content", {
   "error.content.mediaHostSaveFailed": "OpenBot could not save the image host.",
   "error.content.mediaHostCleanup":
     "OpenBot could not remove the image of the last attempt from the image host. Try again later.",
+  "error.content.mediaHostTimeout":
+    "The image host did not answer in 60 seconds. Check the endpoint and the public base URL.",
+  "error.content.mediaHostCancelled": "The image host check was stopped.",
   "error.content.instagramNeedsHost": "Instagram needs an image host.",
   // TODO(loupe): Threads post with an image while no image host is set up
   "error.content.threadsNeedsHost": "Threads needs an image host for a post with an image.",

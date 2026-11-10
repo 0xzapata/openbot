@@ -46,11 +46,16 @@ export interface ContentNetworkChipProps {
   warning?: string;
   /** Skips the network (`false`) or takes it back (`true`). Only a toggle chip calls it. */
   onToggle?: (included: boolean) => void;
+  /** The https link that the network returned for the published post. */
+  link?: string | null;
+  /** Opens `link` in the browser. A published chip with a link and this action is a button. */
+  onOpenLink?: (url: string) => void;
 }
 
 /**
  * One network of a post. A draft, queued, pending or skipped network is a toggle button; after that the
- * chip is a status image with a label. A glyph or a dashed outline goes with each colour.
+ * chip is a status image with a label, or a button that opens the post when the network sent a link. A
+ * glyph or a dashed outline goes with each colour.
  */
 export function ContentNetworkChip(props: ContentNetworkChipProps) {
   const { t, errorMessage, sourceText } = useText();
@@ -61,13 +66,19 @@ export function ContentNetworkChip(props: ContentNetworkChipProps) {
       network: network(),
       status: props.processing ? t("content.variant.processing") : t(chip().statusKey),
     });
-  const errorLabel = () =>
-    props.error
+  const errorLabel = () => {
+    if (props.status === "published" && !props.link) return t("content.variant.noLink", { network: network() });
+    return props.error
       ? t("content.chip.error", {
           label: statusLabel(),
           reason: errorMessage(props.error, t("content.variant.failed")),
         })
       : statusLabel();
+  };
+  const openLink = () => {
+    const link = props.link;
+    return props.status === "published" && link && props.onOpenLink ? link : null;
+  };
   const toggleLabel = () => {
     const label = chip().pressed
       ? t("content.chip.skip", { network: network() })
@@ -91,19 +102,40 @@ export function ContentNetworkChip(props: ContentNetworkChipProps) {
     <Show
       when={chip().toggle}
       fallback={
-        <LabelTooltip content={errorLabel()}>
-          <LabelTooltipTrigger
-            as="span"
-            class="content-chip"
-            data-status={chip().look}
-            role="img"
-            tabindex={props.error ? 0 : undefined}
-            aria-label={errorLabel()}
-          >
-            <ContentNetworkMark platform={props.platform} />
-            {glyph()}
-          </LabelTooltipTrigger>
-        </LabelTooltip>
+        <Show
+          when={openLink()}
+          fallback={
+            <LabelTooltip content={errorLabel()}>
+              <LabelTooltipTrigger
+                as="span"
+                class="content-chip"
+                data-status={chip().look}
+                role="img"
+                tabindex={props.error ? 0 : undefined}
+                aria-label={errorLabel()}
+              >
+                <ContentNetworkMark platform={props.platform} />
+                {glyph()}
+              </LabelTooltipTrigger>
+            </LabelTooltip>
+          }
+        >
+          {(link) => (
+            <LabelTooltip content={t("content.variant.view", { network: network() })}>
+              <LabelTooltipTrigger
+                as={Button}
+                variant="ghost"
+                class="content-chip"
+                data-status={chip().look}
+                aria-label={t("content.variant.view", { network: network() })}
+                onClick={() => props.onOpenLink?.(link())}
+              >
+                <ContentNetworkMark platform={props.platform} />
+                {glyph()}
+              </LabelTooltipTrigger>
+            </LabelTooltip>
+          )}
+        </Show>
       }
     >
       <LabelTooltip content={toggleLabel()}>

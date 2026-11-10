@@ -285,6 +285,7 @@ import type {
   ContentDeletePostInput,
   ContentDisconnectInput,
   ContentListPostsInput,
+  ContentMediaHostInput,
   ContentPostView,
   ContentPublishNowInput,
   ContentSchedulePostInput,
@@ -1502,10 +1503,13 @@ export const IPC_ENDPOINTS = {
   },
   // The content manager of this computer. Local only: the posts, accounts and tokens stay here. No
   // answer holds a token, a client secret or a path. `beginConnect` ends when the sign-in ends;
-  // `disconnectAccount` with `cancel` stops a sign-in that waits for the browser.
+  // `disconnectAccount` with `cancel` stops a sign-in that waits for the browser. `saveMediaHost` ends
+  // when the image host check ends; `cancelMediaHostCheck` stops it.
   content: {
     listAccounts: request<undefined, ContentAccountsState>()("content:list-accounts"),
     beginConnect: request<ContentBeginConnectInput, ContentAccountsState>()("content:begin-connect"),
+    saveMediaHost: request<ContentMediaHostInput, ContentAccountsState>()("content:save-media-host"),
+    cancelMediaHostCheck: request<undefined, ContentAccountsState>()("content:cancel-media-host-check"),
     disconnectAccount: request<ContentDisconnectInput | ContentCancelConnectInput, ContentAccountsState>()(
       "content:disconnect-account",
     ),

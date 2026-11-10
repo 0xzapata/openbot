@@ -148,6 +148,38 @@
     "tr",
     "zh"
   ],
+  "content.accounts.mediaHost.cancelled": [
+    "ar",
+    "de",
+    "es",
+    "fr",
+    "he",
+    "it",
+    "ja",
+    "ko",
+    "nl",
+    "pl",
+    "pt",
+    "ru",
+    "tr",
+    "zh"
+  ],
+  "content.accounts.mediaHost.checking": [
+    "ar",
+    "de",
+    "es",
+    "fr",
+    "he",
+    "it",
+    "ja",
+    "ko",
+    "nl",
+    "pl",
+    "pt",
+    "ru",
+    "tr",
+    "zh"
+  ],
   "content.accounts.mediaHost.configured": [
     "ar",
     "de",
@@ -197,6 +229,22 @@
     "zh"
   ],
   "content.accounts.mediaHost.keysHint": [
+    "ar",
+    "de",
+    "es",
+    "fr",
+    "he",
+    "it",
+    "ja",
+    "ko",
+    "nl",
+    "pl",
+    "pt",
+    "ru",
+    "tr",
+    "zh"
+  ],
+  "content.accounts.mediaHost.needed": [
     "ar",
     "de",
     "es",
@@ -278,6 +326,23 @@
   ],
   "content.accounts.notConnected": ["ar", "de", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
   "content.accounts.reconnect": ["ar", "de", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
+  "content.accounts.redirectUri": ["ar", "de", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
+  "content.accounts.redirectUriHint": [
+    "ar",
+    "de",
+    "es",
+    "fr",
+    "he",
+    "it",
+    "ja",
+    "ko",
+    "nl",
+    "pl",
+    "pt",
+    "ru",
+    "tr",
+    "zh"
+  ],
   "content.accounts.status.connected": [
     "ar",
     "de",
@@ -327,6 +392,7 @@
     "zh"
   ],
   "content.accounts.title": ["ar", "de", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
+  "content.accounts.waitingHint": ["ar", "de", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
   "content.action.accounts": ["ar", "de", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
   "content.action.approve": ["ar", "de", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
   "content.action.more": ["ar", "de", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
@@ -888,6 +954,7 @@
   "content.toast.undo": ["ar", "de", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
   "content.variant.draft": ["ar", "de", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
   "content.variant.failed": ["ar", "de", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
+  "content.variant.noLink": ["ar", "de", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
   "content.variant.pending": ["ar", "de", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
   "content.variant.processing": ["ar", "de", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
   "content.variant.processingNote": [
@@ -910,6 +977,7 @@
   "content.variant.publishing": ["ar", "de", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
   "content.variant.queued": ["ar", "de", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
   "content.variant.skipped": ["ar", "de", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
+  "content.variant.view": ["ar", "de", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
   "content.view.calendar": ["ar", "de", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
   "content.view.label": ["ar", "de", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
   "content.view.queue": ["ar", "de", "es", "fr", "he", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"],
@@ -1135,6 +1203,22 @@
     "tr",
     "zh"
   ],
+  "error.content.mediaHostCancelled": [
+    "ar",
+    "de",
+    "es",
+    "fr",
+    "he",
+    "it",
+    "ja",
+    "ko",
+    "nl",
+    "pl",
+    "pt",
+    "ru",
+    "tr",
+    "zh"
+  ],
   "error.content.mediaHostCleanup": [
     "ar",
     "de",
@@ -1201,6 +1285,22 @@
     "zh"
   ],
   "error.content.mediaHostSaveFailed": [
+    "ar",
+    "de",
+    "es",
+    "fr",
+    "he",
+    "it",
+    "ja",
+    "ko",
+    "nl",
+    "pl",
+    "pt",
+    "ru",
+    "tr",
+    "zh"
+  ],
+  "error.content.mediaHostTimeout": [
     "ar",
     "de",
     "es",

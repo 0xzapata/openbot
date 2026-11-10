@@ -295,7 +295,11 @@ export class ContentPublisher implements RoutineDueSource {
       return;
     }
     if (result.kind === "published") {
-      this.#finish(variantId, { kind: "published", externalPostId: result.externalPostId });
+      this.#finish(variantId, {
+        kind: "published",
+        externalPostId: result.externalPostId,
+        externalUrl: httpsUrlOrNull(result.url),
+      });
       return;
     }
     const checkAt = new Date(this.#now().getTime() + result.checkAfterMs).toISOString();
@@ -342,4 +346,10 @@ function pendingOf(stored: string): string {
   } catch {
     return stored;
   }
+}
+
+/** The link of a published post, kept only when it is an https URL: the renderer opens it in the browser. */
+function httpsUrlOrNull(value: string | null): string | null {
+  if (value === null || !URL.canParse(value)) return null;
+  return new URL(value).protocol === "https:" ? value : null;
 }

@@ -1206,7 +1206,8 @@ receipts.
 ## Content manager
 
 The content manager keeps social media posts, their text for each network, their image or video,
-and their status in the host's local SQLite database. It copies each media file to the
+and their status in the host's local SQLite database. For a published post, it also keeps the post ID
+and the https link that the network returned, so that the user can open the post. It copies each media file to the
 `content-media` folder in OpenBot's data folder. An agent can write a post, but the post is sent
 only after the user approves it.
 

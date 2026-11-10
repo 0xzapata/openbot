@@ -34,7 +34,7 @@ registerHooks({
 
 const { IPC_ENDPOINTS } = await import("@openbot/contracts/ipc");
 const { INPUT_LIMITS } = await import("@openbot/contracts/input-limits");
-const { CONTENT_PLATFORM_KEYS } = await import("@openbot/contracts/ipc-content");
+const { CONTENT_PLATFORM_KEYS, CONTENT_REDIRECT_URI } = await import("@openbot/contracts/ipc-content");
 const { matchingSourceKeys } = await import("@openbot/i18n/source");
 const { Effect } = await import("effect");
 const { AgentStore } = await import("../src/backend/agent-store");
@@ -42,7 +42,7 @@ const { ContentStore } = await import("../src/backend/content/content-store");
 const { runCauseEffect } = await import("../src/backend/effect-boundary");
 const { MailboxStore } = await import("../src/backend/mailbox-store");
 const { OpenBotDatabase } = await import("../src/backend/openbot-database");
-const { CONTENT_REDIRECT_URI, ContentAccounts } = await import("../src/main/content/content-accounts");
+const { ContentAccounts } = await import("../src/main/content/content-accounts");
 const { ContentPublisher } = await import("../src/main/content/content-publisher");
 const { ContentService } = await import("../src/main/content/content-service");
 const { LinkedInAdapter } = await import("../src/main/content/linkedin-adapter");
@@ -301,9 +301,9 @@ try {
       assert.ok(!text.includes(secret), "The result holds no secret or path.");
   };
 
-  await step("0. The ten requests are registered, and an untrusted sender is refused before decoding", async () => {
+  await step("0. The twelve requests are registered, and an untrusted sender is refused before decoding", async () => {
     const requests = Object.values(endpoints).filter((endpoint) => endpoint.kind === "request");
-    assert.equal(requests.length, 10);
+    assert.equal(requests.length, 12);
     for (const endpoint of requests) assert.ok(ipcHandlers.has(endpoint.channel), endpoint.channel);
     const listener = ipcHandlers.get(endpoints.listAccounts.channel);
     assert.ok(listener);
@@ -397,7 +397,7 @@ try {
   });
 
   await step(
-    "1b. Image host: probe failure saves nothing; a probe pass saves it and signs in; new values replace it",
+    "1b. Image host: saved with no app and no sign-in; a probe failure saves nothing; Connect asks only for the app",
     async () => {
       const host = {
         endpoint: `https://${R2}`,
@@ -407,25 +407,50 @@ try {
         secretAccessKey: SECRETS.r2Secret,
       };
       const app = { platform: "instagram", clientId: "ig-client-id", clientSecret: SECRETS.igClientSecret };
-      await refused(
-        endpoints.beginConnect.channel,
-        { platform: "instagram", clientId: "ig-client-id", clientSecret: SECRETS.igClientSecret },
-        "error.content.instagramNeedsHost",
-      );
-      await refused(endpoints.beginConnect.channel, { ...app, mediaHost: host }, "error.content.mediaHostNotPublic");
+      await refused(endpoints.beginConnect.channel, app, "error.content.instagramNeedsHost");
+      await refused(endpoints.saveMediaHost.channel, host, "error.content.mediaHostNotPublic");
       const afterFailure = await call.accounts(endpoints.listAccounts.channel);
       assert.equal(afterFailure.mediaHost?.configured, false, "A failed probe saves nothing.");
       assert.equal(afterFailure.networks.find((network) => network.platform === "instagram")?.app.configured, false);
       await assert.rejects(stat(join(state, "openbot-content-media-host-v1.json")));
       assert.equal(bucket.size, 0, "The probe file is removed on a failure too.");
       for (const bad of [
-        { platform: "x", mediaHost: { ...host, publicBaseUrl: `https://${R2_PUBLIC}` } },
-        { ...app, mediaHost: { ...host, endpoint: `http://${R2}` } },
-        { ...app, mediaHost: { ...host, publicBaseUrl: `https://user:pass@${R2_PUBLIC}` } },
-        { ...app, mediaHost: { ...host, bucket: "Bad_Bucket" } },
-        { ...app, mediaHost: { ...host, extra: true } },
+        { ...host, endpoint: `http://${R2}` },
+        { ...host, publicBaseUrl: `https://user:pass@${R2_PUBLIC}` },
+        { ...host, bucket: "Bad_Bucket" },
+        { ...host, extra: true },
+        { ...host, platform: "instagram" },
       ])
-        await assert.rejects(invoke(endpoints.beginConnect.channel, bad, decodeVoid), /Invalid content sign-in/);
+        await assert.rejects(invoke(endpoints.saveMediaHost.channel, bad, decodeVoid), /Invalid content image host/);
+      // The sign-in no longer takes the host.
+      await assert.rejects(
+        invoke(endpoints.beginConnect.channel, { ...app, mediaHost: host }, decodeVoid),
+        /Invalid content sign-in/,
+      );
+
+      // No Instagram app and no sign-in: the host is checked and saved on its own.
+      r2Requests.length = 0;
+      const saved = await call.accounts(endpoints.saveMediaHost.channel, {
+        ...host,
+        publicBaseUrl: `https://${R2_PUBLIC}`,
+      });
+      assertClean(saved);
+      assert.deepEqual(
+        r2Requests.map((request) => request.method),
+        ["PUT", "GET", "DELETE"],
+      );
+      assert.deepEqual(saved.mediaHost, {
+        configured: true,
+        endpoint: `https://${R2}`,
+        bucket: "content-bucket",
+        publicBaseUrl: `https://${R2_PUBLIC}`,
+        hasKeys: true,
+      });
+      const instagram = saved.networks.find((network) => network.platform === "instagram");
+      assert.equal(instagram?.app.configured, false, "The host needs no Instagram app.");
+      assert.equal(instagram?.account, null, "The host needs no sign-in.");
+      assert.equal(saved.connecting, null);
+      assert.ok(accounts.platforms.includes("instagram"));
 
       browser = (page) => {
         assert.ok(receive);
@@ -436,33 +461,20 @@ try {
         );
       };
       r2Requests.length = 0;
-      const connected = await call.accounts(endpoints.beginConnect.channel, {
-        ...app,
-        mediaHost: { ...host, publicBaseUrl: `https://${R2_PUBLIC}` },
-      });
+      const connected = await call.accounts(endpoints.beginConnect.channel, app);
       assertClean(connected);
-      assert.deepEqual(
-        r2Requests.map((request) => request.method),
-        ["PUT", "GET", "DELETE"],
-      );
-      assert.deepEqual(connected.mediaHost, {
-        configured: true,
-        endpoint: `https://${R2}`,
-        bucket: "content-bucket",
-        publicBaseUrl: `https://${R2_PUBLIC}`,
-        hasKeys: true,
-      });
+      assert.equal(r2Requests.length, 0, "The sign-in does not check the host again.");
       assert.equal(
         connected.networks.find((network) => network.platform === "instagram")?.account?.handle,
         "openbot_ig",
       );
-      assert.ok(accounts.platforms.includes("instagram"));
 
-      // New values with no keys keep the saved keys, run the probe again, and need no new sign-in.
+      // New values with no keys keep the saved keys and run the probe again.
       r2Requests.length = 0;
-      const replaced = await call.accounts(endpoints.beginConnect.channel, {
-        platform: "instagram",
-        mediaHost: { endpoint: `https://${R2}`, bucket: "other-bucket", publicBaseUrl: `https://${R2_PUBLIC}/` },
+      const replaced = await call.accounts(endpoints.saveMediaHost.channel, {
+        endpoint: `https://${R2}`,
+        bucket: "other-bucket",
+        publicBaseUrl: `https://${R2_PUBLIC}/`,
       });
       assertClean(replaced);
       assert.equal(replaced.mediaHost?.bucket, "other-bucket");
@@ -474,6 +486,9 @@ try {
       );
       const file = await readFile(join(state, "openbot-content-media-host-v1.json"), "utf8");
       for (const secret of [SECRETS.r2AccessKey, SECRETS.r2Secret, R2]) assert.ok(!file.includes(secret));
+      // A cancel with no check that runs answers the state and changes nothing.
+      const idle = await call.accounts(endpoints.cancelMediaHostCheck.channel);
+      assert.equal(idle.mediaHost?.bucket, "other-bucket");
       return { mediaHost: replaced.mediaHost };
     },
   );
@@ -666,7 +681,10 @@ try {
     assert.deepEqual(passEvents, [{ postId: created.id }, { postId: created.id }]);
     const [after] = (await call.posts({ limit: 100 })).filter((post) => post.id === created.id);
     assert.equal(after?.status, "published");
-    return { status: after?.status };
+    const x = after?.variants.find((variant) => variant.platform === "x");
+    assert.equal(x?.externalUrl, `https://x.com/i/web/status/${x?.externalPostId}`, "The view carries the link.");
+    assert.equal(after?.variants.find((variant) => variant.platform === "linkedin")?.externalUrl, null);
+    return { status: after?.status, externalUrl: x?.externalUrl };
   });
 
   await step("6. Retry: a failed X variant fails, then retry queues it, and the next pass publishes it", async () => {

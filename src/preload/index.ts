@@ -1085,6 +1085,8 @@ const openbotApi: OpenBotDesktopApi = {
   content: bridgeGroup(IPC_ENDPOINTS.content, {
     listAccounts: decodeContentAccountsState,
     beginConnect: decodeContentAccountsState,
+    saveMediaHost: decodeContentAccountsState,
+    cancelMediaHostCheck: decodeContentAccountsState,
     disconnectAccount: decodeContentAccountsState,
     listPosts: decodeContentPosts,
     createPost: decodeContentPost,

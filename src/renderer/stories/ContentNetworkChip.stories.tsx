@@ -41,6 +41,14 @@ export const NeedsHost: Story = {
   args: { platform: "instagram", status: "draft", warning: "Instagram needs an image host.", onToggle: fn() },
 };
 
+/** A published post with a link: a button that opens it, labelled "View on X". */
+export const PublishedWithLink: Story = {
+  args: { platform: "x", status: "published", link: "https://x.com/i/web/status/1001", onOpenLink: fn() },
+};
+
+/** A published post whose network sent no link: a status image that says so. */
+export const PublishedNoLink: Story = { args: { platform: "linkedin", status: "published", link: null } };
+
 /** A network that accepted the post and still processes the media: the clock and "Processing". */
 export const Processing: Story = { args: { platform: "youtube", status: "publishing", processing: true } };
 

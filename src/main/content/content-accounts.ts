@@ -9,6 +9,9 @@
 
 import { readFile, rm } from "node:fs/promises";
 import {
+  CONTENT_REDIRECT_PATH,
+  CONTENT_REDIRECT_PORT,
+  CONTENT_REDIRECT_URI,
   type ContentMediaHostInput,
   type ContentMediaHostView,
   type ContentPlatform,
@@ -40,16 +43,9 @@ export const CONTENT_APPS_FILE = "openbot-content-apps-v1.json";
 /** The image host settings, encrypted as one value, as the apps file is. */
 export const CONTENT_MEDIA_HOST_FILE = "openbot-content-media-host-v1.json";
 
-/**
- * X and LinkedIn compare the registered callback exactly, so the port is fixed. 28417 is the MCP
- * listener. LinkedIn asks for https redirect addresses in its documents: whether it takes
- * `http://127.0.0.1` is not confirmed, and the user must test it when they register the app.
- */
-export const CONTENT_REDIRECT_PORT = 28_418;
-export const CONTENT_REDIRECT_PATH = "/content-auth";
-export const CONTENT_REDIRECT_URI = `http://127.0.0.1:${CONTENT_REDIRECT_PORT}${CONTENT_REDIRECT_PATH}`;
-
 const CONNECT_DEADLINE_MS = 5 * 60_000;
+/** The longest time of one image host check: the put, the public read and the removal. */
+export const CONTENT_MEDIA_HOST_CHECK_MS = 60_000;
 /** A token that ends in less than this is refreshed before a publish. */
 export const CONTENT_REFRESH_MARGIN_MS = 60_000;
 
@@ -88,6 +84,8 @@ export interface ContentAccountsOptions {
   openExternal: (url: string) => Promise<void>;
   listen: ContentCallbackListen;
   now: () => Date;
+  /** The limit of one image host check. The E2E gives a short one. */
+  mediaHostCheckMs?: number;
 }
 
 interface PendingSignIn {
@@ -111,6 +109,9 @@ export class ContentAccounts {
   /** The saved image host. `loadMediaHost` reads it at startup; a save replaces it. */
   #mediaHost: { settings: ContentMediaHostSettings; host: ContentMediaHost } | null = null;
   #pending: PendingSignIn | null = null;
+  /** Stops the image host check that runs, if any. One check at a time: a new save ends the one before. */
+  #hostCheck: Deferred.Deferred<never, ContentAccountError> | null = null;
+  readonly #hostCheckMs: number;
   readonly #refreshing = new Map<string, Effect.Effect<string, ContentAdapterError>>();
 
   constructor(options: ContentAccountsOptions) {
@@ -123,6 +124,7 @@ export class ContentAccounts {
     this.#openExternal = options.openExternal;
     this.#listen = options.listen;
     this.#now = options.now;
+    this.#hostCheckMs = options.mediaHostCheckMs ?? CONTENT_MEDIA_HOST_CHECK_MS;
   }
 
   /**
@@ -176,7 +178,8 @@ export class ContentAccounts {
 
   /**
    * Checks the image host with these values, and saves them only when the check passes. An absent key
-   * field takes the saved one. Nothing is saved on a failure.
+   * field takes the saved one. Nothing is saved on a failure, on a stop (`cancelMediaHostCheck`, or a
+   * new save) or after `CONTENT_MEDIA_HOST_CHECK_MS`.
    */
   readonly saveMediaHost = Effect.fn("ContentAccounts.saveMediaHost")(function* (
     this: ContentAccounts,
@@ -199,7 +202,24 @@ export class ContentAccounts {
       secretAccessKey,
     };
     const host = this.#makeMediaHost(settings);
-    yield* host.probe().pipe(Effect.mapError((error) => new ContentAccountError({ message: error.message })));
+    this.cancelMediaHostCheck();
+    const stop = Deferred.makeUnsafe<never, ContentAccountError>();
+    this.#hostCheck = stop;
+    yield* host.probe().pipe(
+      Effect.mapError((error) => new ContentAccountError({ message: error.message })),
+      // The check that loses the race is interrupted: its requests are aborted, and the probe file is
+      // still removed.
+      Effect.raceFirst(Deferred.await(stop)),
+      Effect.timeoutOrElse({
+        duration: this.#hostCheckMs,
+        orElse: () => Effect.fail(new ContentAccountError({ message: sourceText("error.content.mediaHostTimeout") })),
+      }),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (this.#hostCheck === stop) this.#hostCheck = null;
+        }),
+      ),
+    );
     const encrypted = this.#cipher.encrypt(JSON.stringify(settings)).toString("base64");
     yield* this.#appWrites.withPermit(
       writeFileAtomically(this.#mediaHostPath, `${JSON.stringify({ version: 1, host: encrypted })}\n`, {
@@ -210,6 +230,17 @@ export class ContentAccounts {
     );
     this.#mediaHost = { settings, host };
   });
+
+  /** Ends the image host check that runs, if any. Its save fails with `mediaHostCancelled`. */
+  cancelMediaHostCheck(): void {
+    const stop = this.#hostCheck;
+    if (!stop) return;
+    this.#hostCheck = null;
+    Deferred.doneUnsafe(
+      stop,
+      Effect.fail(new ContentAccountError({ message: sourceText("error.content.mediaHostCancelled") })),
+    );
+  }
 
   /** The network of the sign-in that waits for the browser, if any. */
   get connecting(): ContentPlatform | null {

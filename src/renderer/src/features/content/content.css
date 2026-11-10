@@ -425,6 +425,13 @@
   margin-top: var(--openbot-space-2);
 }
 
+/* The redirect address and its copy button on one line. */
+.content-redirect {
+  display: flex;
+  align-items: center;
+  gap: var(--openbot-space-2);
+}
+
 /* The calendar fills the page below the tabs and scrolls inside it. */
 .content-calendar {
   padding: var(--openbot-space-3) var(--openbot-space-6) var(--openbot-space-6);

@@ -4,12 +4,14 @@ import {
   type ContentAccountView,
   type ContentChangedEvent,
   type ContentDesktopApi,
+  type ContentMediaHostView,
   type ContentPlatform,
   type ContentPostView,
   type ContentVariantStatus,
   type ContentVariantView,
   contentPostStatus,
 } from "@openbot/contracts/ipc";
+import { sourceText } from "@openbot/i18n/source";
 
 const HOUR = 60 * 60 * 1000;
 const CREATED = "2026-11-01T09:00:00.000Z";
@@ -43,6 +45,7 @@ function variant(platform: ContentPlatform, status: ContentVariantStatus, error:
     status,
     attempt: status === "failed" || status === "published" ? 1 : 0,
     externalPostId: status === "published" ? "1001" : null,
+    externalUrl: status === "published" && platform === "x" ? "https://x.com/studiowidget/status/1001" : null,
     errorCode: error ? "rejected" : null,
     error,
     publishedAt: null,
@@ -154,6 +157,15 @@ export function createMockContent(): ContentDesktopApi {
   const accounts = exampleAccounts();
   let posts = examplePosts();
   let connecting: ContentPlatform | null = null;
+  let mediaHost: ContentMediaHostView = {
+    configured: false,
+    endpoint: "https://example.r2.cloudflarestorage.com",
+    bucket: "content-images",
+    publicBaseUrl: "https://pub-example.r2.dev",
+    hasKeys: false,
+  };
+  /** Ends the image host check that waits, as a cancel. */
+  let stopHostCheck: (() => void) | null = null;
   const listeners = new Set<(event: ContentChangedEvent) => void>();
   const changed = (event: ContentChangedEvent) => {
     for (const listener of listeners) listener(event);
@@ -173,6 +185,7 @@ export function createMockContent(): ContentDesktopApi {
     })),
     connecting,
     secretStorage: true,
+    mediaHost: { ...mediaHost },
   });
   const find = (postId: string) => {
     const found = posts.find((candidate) => candidate.id === postId);
@@ -213,6 +226,32 @@ export function createMockContent(): ContentDesktopApi {
         expiresAt: null,
       });
       changed({ accounts: true });
+      return state();
+    },
+    saveMediaHost: async (input) => {
+      stopHostCheck?.();
+      // As main: the check takes a moment, and a cancel ends it with `mediaHostCancelled`.
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, 1500);
+        stopHostCheck = () => {
+          clearTimeout(timer);
+          reject(new Error(sourceText("error.content.mediaHostCancelled")));
+        };
+      }).finally(() => {
+        stopHostCheck = null;
+      });
+      mediaHost = {
+        configured: true,
+        endpoint: input.endpoint,
+        bucket: input.bucket,
+        publicBaseUrl: input.publicBaseUrl,
+        hasKeys: true,
+      };
+      changed({ accounts: true });
+      return state();
+    },
+    cancelMediaHostCheck: async () => {
+      stopHostCheck?.();
       return state();
     },
     disconnectAccount: async (input) => {

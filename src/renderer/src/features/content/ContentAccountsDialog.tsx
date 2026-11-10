@@ -1,9 +1,11 @@
-import type {
-  ContentAccountsState,
-  ContentMediaHostInput,
-  ContentNetworkView,
-  ContentPlatform,
+import {
+  CONTENT_REDIRECT_URI,
+  type ContentAccountsState,
+  type ContentMediaHostInput,
+  type ContentNetworkView,
+  type ContentPlatform,
 } from "@openbot/contracts/ipc-content";
+import { sourceText } from "@openbot/i18n/source";
 import {
   Alert,
   AlertActions,
@@ -12,9 +14,11 @@ import {
   Badge,
   Button,
   ConfirmDialog,
+  CopyButton,
   Dialog,
   Field,
   IconButton,
+  Image,
   Input,
   Item,
   ItemActions,
@@ -30,12 +34,28 @@ import {
 import { ContentNetworkMark } from "@openbot/ui/features/content/ContentParts";
 import { CONTENT_NETWORK_NAMES, contentGateKey } from "@openbot/ui/features/content/content-status";
 import { useText } from "@openbot/ui/text";
-import { createEffect, createStore, For, flush, Match, onSettled, Show, Switch } from "solid-js";
+import { createEffect, createStore, createUniqueId, For, flush, Match, onSettled, Show, Switch } from "solid-js";
 import type { ContentState } from "./content-context";
 
-/** Instagram is connected, and no image host is set up: it cannot post (G13). */
+/** Instagram has no image host: it cannot post, and its Connect waits for the host (G13). */
 const needsHost = (network: ContentNetworkView, hostConfigured: boolean) =>
-  network.platform === "instagram" && network.account?.status === "connected" && !hostConfigured;
+  network.platform === "instagram" && network.available && !hostConfigured;
+
+/** The read-only redirect address with a copy action: the same for every network. */
+function RedirectUriField(props: { network: string }) {
+  const { t } = useText();
+  return (
+    <Field
+      label={t("content.accounts.redirectUri")}
+      description={t("content.accounts.redirectUriHint", { network: props.network })}
+    >
+      <span class="content-redirect">
+        <Input value={CONTENT_REDIRECT_URI} readonly spellcheck={false} />
+        <CopyButton value={CONTENT_REDIRECT_URI} variant="outline" size="sm" />
+      </span>
+    </Field>
+  );
+}
 
 /** The badge of a network, as `ProviderAccountList` maps account states. */
 function accountBadge(network: ContentNetworkView, hostConfigured: boolean) {
@@ -64,8 +84,15 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
     disconnect: ContentNetworkView | null;
     /** The sign-in that this window started, before the first refresh shows it. */
     starting: ContentPlatform | null;
-    /** The image host fields of the Instagram row. The two keys are never filled from main. */
+    /** The image host fields of the host row. The two keys are never filled from main. */
     host: Required<ContentMediaHostInput>;
+    /** The host row shows its fields. */
+    hostOpen: boolean;
+    /** Main checks the host values; Save waits for it. */
+    hostChecking: boolean;
+    /** The last check was stopped. */
+    hostCancelled: boolean;
+    hostError: string | null;
   }>({
     setup: null,
     clientId: "",
@@ -74,7 +101,12 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
     disconnect: null,
     starting: null,
     host: { endpoint: "", bucket: "", publicBaseUrl: "", accessKeyId: "", secretAccessKey: "" },
+    hostOpen: false,
+    hostChecking: false,
+    hostCancelled: false,
+    hostError: null,
   });
+  const hostTitleId = createUniqueId();
   const accounts = () => props.content.state.accounts;
   const connecting = () => state.starting ?? accounts()?.connecting ?? null;
   const open = () => props.content.state.accountsDialog !== null;
@@ -93,12 +125,15 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
       draft.clientSecret = "";
       draft.host.accessKeyId = "";
       draft.host.secretAccessKey = "";
+      draft.hostOpen = false;
+      draft.hostCancelled = false;
+      draft.hostError = null;
     });
   });
   const hostView = () => accounts()?.mediaHost ?? null;
   const hostConfigured = () => hostView()?.configured === true;
   let dialog: HTMLElement | undefined;
-  /** The host fields that the Instagram row sends; an empty key field keeps the saved key. */
+  /** The host fields that the host row sends; an empty key field keeps the saved key. */
   const hostInput = (): ContentMediaHostInput => ({
     endpoint: state.host.endpoint.trim(),
     bucket: state.host.bucket.trim(),
@@ -117,40 +152,52 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
       draft.setup = network.platform;
       draft.clientId = network.app.clientId ?? "";
       draft.clientSecret = "";
-      const host = hostView();
-      draft.host = {
-        endpoint: host?.endpoint ?? "",
-        bucket: host?.bucket ?? "",
-        publicBaseUrl: host?.publicBaseUrl ?? "",
-        accessKeyId: "",
-        secretAccessKey: "",
-      };
     });
-    // G13: the host fields of Instagram take focus on their first empty field.
-    if (network.platform !== "instagram") return;
-    flush();
-    const empty = [...(dialog?.querySelectorAll<HTMLInputElement>(".content-account-host input") ?? [])].find(
-      (input) => !input.value,
-    );
-    empty?.focus();
   };
 
-  // `openAccounts("instagram")` from the composer or the queue opens the image host step at once, so it
-  // takes one click. Only while Instagram is connected and has no host: a Connect asks for it anyway.
-  // The compute gives a string, so a reload of the accounts does not open the step again over typed values.
-  createEffect(
-    () => {
-      const platform = props.content.state.accountsDialog?.platform;
-      const network = accounts()?.networks.find((candidate) => candidate.platform === platform);
-      return network && needsHost(network, hostConfigured()) ? network.platform : null;
-    },
-    (platform) => {
-      if (!platform) return;
-      // The store is read in the frame, not in this callback (Solid 2: no store reads in an effect callback).
-      requestAnimationFrame(() => {
-        const network = accounts()?.networks.find((candidate) => candidate.platform === platform);
-        if (network) openSetup(network);
+  const hostRow = () => dialog?.querySelector<HTMLElement>(".content-media-host");
+  /** The first button of the host row: Save while its fields show, else Set up or Edit. */
+  const focusHostAction = () => {
+    flush();
+    hostRow()?.querySelector<HTMLElement>(".ui-item-actions button")?.focus();
+  };
+
+  /**
+   * G13: opens the host row with the saved values, scrolls to it and moves focus to its first empty field.
+   * Fields that are open already keep what the user typed.
+   */
+  const openHost = () => {
+    if (!state.hostOpen) {
+      const host = hostView();
+      setState((draft) => {
+        draft.hostOpen = true;
+        draft.hostCancelled = false;
+        draft.hostError = null;
+        draft.host = {
+          endpoint: host?.endpoint ?? "",
+          bucket: host?.bucket ?? "",
+          publicBaseUrl: host?.publicBaseUrl ?? "",
+          accessKeyId: "",
+          secretAccessKey: "",
+        };
       });
+      flush();
+    }
+    const row = hostRow();
+    row?.scrollIntoView({ block: "nearest" });
+    const fields = [...(row?.querySelectorAll<HTMLInputElement>("input") ?? [])];
+    (fields.find((input) => !input.value) ?? fields[0])?.focus();
+  };
+
+  // `openAccounts("instagram")` from the composer or the queue opens the host row at once, so it takes one
+  // click. Only while no host is set up. The compute gives a boolean, so a reload of the accounts does not
+  // open the row again over typed values.
+  createEffect(
+    () => props.content.state.accountsDialog?.platform === "instagram" && Boolean(accounts()) && !hostConfigured(),
+    (wanted) => {
+      if (!wanted) return;
+      // The store is read in the frame, not in this callback (Solid 2: no store reads in an effect callback).
+      requestAnimationFrame(openHost);
     },
   );
 
@@ -174,25 +221,18 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
   }
 
   function connect(network: ContentNetworkView) {
-    // Each network needs the client ID of the user's own app first, some also its secret. Instagram
-    // needs the image host too.
-    const needsApp =
-      !network.app.configured ||
-      (network.app.needsSecret && !network.app.hasSecret) ||
-      (network.platform === "instagram" && !hostView()?.configured);
+    // Each network needs the client ID of the user's own app first, some also its secret.
+    const needsApp = !network.app.configured || (network.app.needsSecret && !network.app.hasSecret);
     if (needsApp && state.setup !== network.platform) {
       openSetup(network);
       return;
     }
     const clientId = state.setup === network.platform ? state.clientId.trim() : "";
     const clientSecret = state.setup === network.platform ? state.clientSecret : "";
-    const mediaHost = state.setup === "instagram" && network.platform === "instagram" ? hostInput() : null;
     // The wait shows at once, so a second click cannot start, or cancel, a second sign-in.
     setState((draft) => {
       draft.setup = null;
       draft.clientSecret = "";
-      draft.host.accessKeyId = "";
-      draft.host.secretAccessKey = "";
       draft.starting = network.platform;
     });
     // `beginConnect` ends when the sign-in ends; `connecting` shows the wait meanwhile.
@@ -201,7 +241,6 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
         platform: network.platform,
         ...(clientId ? { clientId } : {}),
         ...(clientSecret ? { clientSecret } : {}),
-        ...(mediaHost ? { mediaHost } : {}),
       }),
     ).finally(() =>
       setState((draft) => {
@@ -211,20 +250,63 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
     void props.content.reloadAccounts();
   }
 
-  /** New image host values for a connected Instagram account: main checks and saves them, with no sign-in. */
-  function saveHost(network: ContentNetworkView) {
+  /** Main checks the host values and saves them only when the check passes. No network or sign-in. */
+  async function saveHost() {
     const mediaHost = hostInput();
     setState((draft) => {
-      draft.setup = null;
+      draft.hostChecking = true;
+      draft.hostCancelled = false;
+      draft.hostError = null;
+    });
+    try {
+      props.content.setAccounts(await props.content.port().content.saveMediaHost(mediaHost));
+      setState((draft) => {
+        draft.hostOpen = false;
+        draft.host.accessKeyId = "";
+        draft.host.secretAccessKey = "";
+      });
+      // The Save button is gone: focus goes to the action of the row.
+      focusHostAction();
+    } catch (error) {
+      // The IPC error keeps main's `sourceText` English at the end of its message. A stop is not an error:
+      // the fields keep their values, so the user can fix one and Save again.
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.endsWith(sourceText("error.content.mediaHostCancelled"))) {
+        setState((draft) => {
+          draft.hostCancelled = true;
+        });
+        focusHostAction();
+      } else
+        setState((draft) => {
+          draft.hostError = errorMessage(error, t("error.content.mediaHostSaveFailed"));
+        });
+      void props.content.reloadAccounts();
+    } finally {
+      setState((draft) => {
+        draft.hostChecking = false;
+      });
+    }
+  }
+
+  /** Stops a running check; else closes the host fields. */
+  function cancelHost() {
+    if (state.hostChecking) {
+      // The save that waits ends with `mediaHostCancelled` and shows the caption. If this call fails, the
+      // check still ends by itself at 60 seconds and shows its own result.
+      void props.content
+        .port()
+        .content.cancelMediaHostCheck()
+        .catch(() => undefined);
+      return;
+    }
+    setState((draft) => {
+      draft.hostOpen = false;
+      draft.hostCancelled = false;
+      draft.hostError = null;
       draft.host.accessKeyId = "";
       draft.host.secretAccessKey = "";
     });
-    // The Save button is gone: focus goes to the action of the row.
-    flush();
-    dialog?.querySelector<HTMLElement>(`[data-platform="${network.platform}"] .ui-item-actions button`)?.focus();
-    void call(network.platform, () =>
-      props.content.port().content.beginConnect({ platform: network.platform, mediaHost }),
-    );
+    focusHostAction();
   }
 
   const cancel = (platform: ContentPlatform) =>
@@ -242,7 +324,15 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
 
   return (
     <>
-      <Dialog.Root open={open()} onOpenChange={(next) => !next && props.content.closeAccounts()}>
+      <Dialog.Root
+        open={open()}
+        onOpenChange={(next) => {
+          if (next) return;
+          // Closing the dialog is a Cancel of the running host check.
+          if (state.hostChecking) cancelHost();
+          props.content.closeAccounts();
+        }}
+      >
         <Dialog.Portal>
           <Dialog.Overlay>
             <Dialog.Content
@@ -366,91 +456,13 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
                                       />
                                     </Field>
                                   </Show>
+                                  <RedirectUriField network={name()} />
                                 </div>
                               </Show>
-                              <Show when={network().platform === "instagram" && network().available}>
-                                <Show when={hostView()?.configured && state.setup !== "instagram"}>
-                                  <Text variant="caption">{t("content.accounts.mediaHost.configured")}</Text>
-                                </Show>
-                                <Show when={state.setup === "instagram"}>
-                                  <fieldset class="content-account-app content-account-host">
-                                    <legend>{t("content.accounts.mediaHost.title")}</legend>
-                                    <Text variant="caption">{t("content.accounts.mediaHost.description")}</Text>
-                                    <Field label={t("content.accounts.mediaHost.endpoint")} required>
-                                      <Input
-                                        type="url"
-                                        value={state.host.endpoint}
-                                        autocomplete="off"
-                                        spellcheck={false}
-                                        onValueChange={(value) =>
-                                          setState((draft) => {
-                                            draft.host.endpoint = value;
-                                          })
-                                        }
-                                      />
-                                    </Field>
-                                    <Field label={t("content.accounts.mediaHost.bucket")} required>
-                                      <Input
-                                        value={state.host.bucket}
-                                        autocomplete="off"
-                                        spellcheck={false}
-                                        onValueChange={(value) =>
-                                          setState((draft) => {
-                                            draft.host.bucket = value;
-                                          })
-                                        }
-                                      />
-                                    </Field>
-                                    <Field
-                                      label={t("content.accounts.mediaHost.publicBaseUrl")}
-                                      description={t("content.accounts.mediaHost.publicBaseUrlHint")}
-                                      required
-                                    >
-                                      <Input
-                                        type="url"
-                                        value={state.host.publicBaseUrl}
-                                        autocomplete="off"
-                                        spellcheck={false}
-                                        onValueChange={(value) =>
-                                          setState((draft) => {
-                                            draft.host.publicBaseUrl = value;
-                                          })
-                                        }
-                                      />
-                                    </Field>
-                                    <Field
-                                      label={t("content.accounts.mediaHost.accessKeyId")}
-                                      description={t("content.accounts.mediaHost.keysHint")}
-                                      required={!hostView()?.hasKeys}
-                                    >
-                                      <Input
-                                        type="password"
-                                        value={state.host.accessKeyId}
-                                        autocomplete="off"
-                                        onValueChange={(value) =>
-                                          setState((draft) => {
-                                            draft.host.accessKeyId = value;
-                                          })
-                                        }
-                                      />
-                                    </Field>
-                                    <Field
-                                      label={t("content.accounts.mediaHost.secretAccessKey")}
-                                      required={!hostView()?.hasKeys}
-                                    >
-                                      <Input
-                                        type="password"
-                                        value={state.host.secretAccessKey}
-                                        autocomplete="off"
-                                        onValueChange={(value) =>
-                                          setState((draft) => {
-                                            draft.host.secretAccessKey = value;
-                                          })
-                                        }
-                                      />
-                                    </Field>
-                                  </fieldset>
-                                </Show>
+                              <Show when={connecting() === network().platform}>
+                                <Text variant="caption" tone="muted">
+                                  {t("content.accounts.waitingHint", { network: name() })}
+                                </Text>
                               </Show>
                             </ItemContent>
                             <Show when={badge()}>
@@ -472,44 +484,10 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
                                       {t("common.cancel")}
                                     </Button>
                                   </Match>
-                                  <Match
-                                    when={
-                                      network().platform === "instagram" &&
-                                      account()?.status === "connected" &&
-                                      state.setup === "instagram"
-                                    }
-                                  >
-                                    <Button
-                                      variant="outline"
-                                      size="xs"
-                                      disabled={hostIncomplete()}
-                                      onClick={() => saveHost(network())}
-                                    >
-                                      {t("common.save")}
-                                    </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="xs"
-                                      onClick={() =>
-                                        setState((draft) => {
-                                          draft.setup = null;
-                                        })
-                                      }
-                                    >
-                                      {t("common.cancel")}
-                                    </Button>
-                                  </Match>
                                   <Match when={account()?.status === "connected"}>
-                                    <Show when={network().platform === "instagram"}>
-                                      {/* One button, so focus stays on it when a saved host changes its label. */}
-                                      <Button
-                                        variant={needsHost(network(), hostConfigured()) ? "outline" : "ghost"}
-                                        size="xs"
-                                        onClick={() => openSetup(network())}
-                                      >
-                                        {needsHost(network(), hostConfigured())
-                                          ? t("content.action.setUpHost")
-                                          : t("content.accounts.mediaHost.title")}
+                                    <Show when={needsHost(network(), hostConfigured())}>
+                                      <Button variant="outline" size="xs" onClick={openHost}>
+                                        {t("content.action.setUpHost")}
                                       </Button>
                                     </Show>
                                     <Button
@@ -524,6 +502,12 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
                                       {t("content.accounts.disconnect")}
                                     </Button>
                                   </Match>
+                                  <Match when={needsHost(network(), hostConfigured())}>
+                                    {/* Connect waits for the host: Instagram cannot post without it. */}
+                                    <Button variant="outline" size="xs" onClick={openHost}>
+                                      {t("content.action.setUpHost")}
+                                    </Button>
+                                  </Match>
                                   <Match when={true}>
                                     <Button
                                       variant="outline"
@@ -534,8 +518,7 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
                                           (!state.clientId.trim() ||
                                             (network().app.needsSecret &&
                                               !network().app.hasSecret &&
-                                              !state.clientSecret) ||
-                                            (network().platform === "instagram" && hostIncomplete())))
+                                              !state.clientSecret)))
                                       }
                                       onClick={() => connect(network())}
                                     >
@@ -551,6 +534,142 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
                         );
                       }}
                     </For>
+                    <Item role="listitem" class="content-account content-media-host">
+                      <ItemMedia>
+                        <Image class="content-network-mark" aria-hidden="true" />
+                      </ItemMedia>
+                      <ItemContent>
+                        <ItemTitle id={hostTitleId}>{t("content.accounts.mediaHost.title")}</ItemTitle>
+                        <ItemDescription>
+                          {hostConfigured()
+                            ? t("content.accounts.mediaHost.configured")
+                            : t("content.accounts.mediaHost.needed")}
+                        </ItemDescription>
+                        <Show when={state.hostError}>
+                          {(error) => (
+                            <Text tone="danger" variant="caption" role="alert">
+                              {error()}
+                            </Text>
+                          )}
+                        </Show>
+                        <Show when={state.hostOpen}>
+                          <fieldset
+                            class="content-account-app content-account-host"
+                            aria-labelledby={hostTitleId}
+                            aria-busy={state.hostChecking ? "true" : undefined}
+                          >
+                            <Text variant="caption">{t("content.accounts.mediaHost.description")}</Text>
+                            <Field label={t("content.accounts.mediaHost.endpoint")} required>
+                              <Input
+                                type="url"
+                                value={state.host.endpoint}
+                                autocomplete="off"
+                                readonly={state.hostChecking}
+                                spellcheck={false}
+                                onValueChange={(value) =>
+                                  setState((draft) => {
+                                    draft.host.endpoint = value;
+                                  })
+                                }
+                              />
+                            </Field>
+                            <Field label={t("content.accounts.mediaHost.bucket")} required>
+                              <Input
+                                value={state.host.bucket}
+                                autocomplete="off"
+                                readonly={state.hostChecking}
+                                spellcheck={false}
+                                onValueChange={(value) =>
+                                  setState((draft) => {
+                                    draft.host.bucket = value;
+                                  })
+                                }
+                              />
+                            </Field>
+                            <Field
+                              label={t("content.accounts.mediaHost.publicBaseUrl")}
+                              description={t("content.accounts.mediaHost.publicBaseUrlHint")}
+                              required
+                            >
+                              <Input
+                                type="url"
+                                value={state.host.publicBaseUrl}
+                                autocomplete="off"
+                                readonly={state.hostChecking}
+                                spellcheck={false}
+                                onValueChange={(value) =>
+                                  setState((draft) => {
+                                    draft.host.publicBaseUrl = value;
+                                  })
+                                }
+                              />
+                            </Field>
+                            <Field
+                              label={t("content.accounts.mediaHost.accessKeyId")}
+                              description={t("content.accounts.mediaHost.keysHint")}
+                              required={!hostView()?.hasKeys}
+                            >
+                              <Input
+                                type="password"
+                                value={state.host.accessKeyId}
+                                autocomplete="off"
+                                readonly={state.hostChecking}
+                                onValueChange={(value) =>
+                                  setState((draft) => {
+                                    draft.host.accessKeyId = value;
+                                  })
+                                }
+                              />
+                            </Field>
+                            <Field
+                              label={t("content.accounts.mediaHost.secretAccessKey")}
+                              required={!hostView()?.hasKeys}
+                            >
+                              <Input
+                                type="password"
+                                value={state.host.secretAccessKey}
+                                autocomplete="off"
+                                readonly={state.hostChecking}
+                                onValueChange={(value) =>
+                                  setState((draft) => {
+                                    draft.host.secretAccessKey = value;
+                                  })
+                                }
+                              />
+                            </Field>
+                            <Show when={state.hostCancelled}>
+                              <Text variant="caption" tone="muted" role="status">
+                                {t("content.accounts.mediaHost.cancelled")}
+                              </Text>
+                            </Show>
+                          </fieldset>
+                        </Show>
+                      </ItemContent>
+                      <ItemActions>
+                        <Show
+                          when={state.hostOpen}
+                          fallback={
+                            <Button variant={hostConfigured() ? "ghost" : "outline"} size="xs" onClick={openHost}>
+                              {hostConfigured() ? t("common.edit") : t("content.action.setUpHost")}
+                            </Button>
+                          }
+                        >
+                          <Button
+                            variant="outline"
+                            size="xs"
+                            loading={state.hostChecking}
+                            loadingLabel={t("content.accounts.mediaHost.checking")}
+                            disabled={hostIncomplete()}
+                            onClick={() => void saveHost()}
+                          >
+                            {t("common.save")}
+                          </Button>
+                          <Button variant="ghost" size="xs" onClick={cancelHost}>
+                            {t("common.cancel")}
+                          </Button>
+                        </Show>
+                      </ItemActions>
+                    </Item>
                   </ItemGroup>
                 )}
               </Show>

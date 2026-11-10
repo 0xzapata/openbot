@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   CONTENT_PLATFORM_KEYS,
+  CONTENT_REDIRECT_URI,
   type ContentMedia,
   type ContentPlatform,
   contentPostStatus,
@@ -28,7 +29,7 @@ import { AgentStore } from "../src/backend/agent-store";
 import { type ContentPostInput, ContentStateError, ContentStore } from "../src/backend/content/content-store";
 import { runCauseEffect } from "../src/backend/effect-boundary";
 import { OpenBotDatabase } from "../src/backend/openbot-database";
-import { CONTENT_MEDIA_HOST_FILE, CONTENT_REDIRECT_URI, ContentAccounts } from "../src/main/content/content-accounts";
+import { CONTENT_MEDIA_HOST_FILE, ContentAccounts } from "../src/main/content/content-accounts";
 import type { ContentFetch } from "../src/main/content/content-adapter";
 import { R2MediaHost } from "../src/main/content/content-media-host";
 import { ContentPublisher } from "../src/main/content/content-publisher";
@@ -535,10 +536,12 @@ try {
     const linkedin = variantOf(post.id, "linkedin");
     assert.equal(x.status, "published");
     assert.equal(x.externalPostId, "1001");
+    assert.equal(x.externalUrl, "https://x.com/i/web/status/1001", "The https link is stored.");
     assert.equal(x.attempt, 1);
     assert.ok(x.accountId);
     assert.equal(linkedin.status, "published");
     assert.equal(linkedin.externalPostId, "urn:li:share:7001");
+    assert.equal(linkedin.externalUrl, "https://www.linkedin.com/feed/update/urn:li:share:7001/");
     for (const platform of ["instagram", "threads", "facebook_page", "youtube"] as const) {
       const variant = variantOf(post.id, platform);
       assert.equal(variant.status, "skipped");
@@ -957,10 +960,19 @@ try {
     const R2_SECRET = "test-r2-secret-access-key-0123456789";
     const bucket = new Map<string, Buffer>();
     let failDeletes = 0;
+    /** While set, a public GET answers only when this promise settles, or fails when its request is aborted. */
+    let holdPublic: Promise<void> | null = null;
+    /** The limit of an image host check in the next `build`. Unset: the 60 s default. */
+    let hostCheckMs: number | undefined;
     // `bucket` is the bucket of an S3 request, or "public" for a read over the public URL.
     const r2Log: Array<{ method: string; key: string; bucket: string }> = [];
     const sent4: Array<{ route: string; body: string }> = [];
-    const answers = { ig: "IN_PROGRESS", th: "FINISHED", yt: "processing" };
+    const answers = {
+      ig: "IN_PROGRESS",
+      th: "FINISHED",
+      yt: "processing",
+      igPermalink: "https://www.instagram.com/p/ig-m1/",
+    };
     const fetch4: ContentFetch = async (url, init) => {
       const parsed = new URL(url);
       const method = init.method ?? "GET";
@@ -981,6 +993,13 @@ try {
       }
       if (parsed.host === PUBLIC) {
         r2Log.push({ method: "GET", key: parsed.pathname.slice(1), bucket: "public" });
+        const held = holdPublic;
+        const signal = init.signal;
+        if (held && signal)
+          await new Promise<void>((resolve, reject) => {
+            void held.then(resolve);
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
         const object = bucket.get(parsed.pathname.slice(1));
         return object ? new Response(new Uint8Array(object), { status: 200 }) : new Response(null, { status: 404 });
       }
@@ -994,7 +1013,7 @@ try {
         case "POST graph.instagram.com/v24.0/ig-1/media_publish":
           return json(200, { id: "ig-m1" });
         case "GET graph.instagram.com/v24.0/ig-m1":
-          return json(200, { permalink: "https://www.instagram.com/p/ig-m1/" });
+          return json(200, { permalink: answers.igPermalink });
         case "POST graph.threads.com/v1.0/th-1/threads":
           return json(200, { id: "th-c1" });
         case "GET graph.threads.com/v1.0/th-c1":
@@ -1053,6 +1072,7 @@ try {
         openExternal: async () => {},
         listen: async () => ({ close: async () => {} }),
         now,
+        ...(hostCheckMs === undefined ? {} : { mediaHostCheckMs: hostCheckMs }),
       });
       return { store, accounts2, publisher2: new ContentPublisher({ store, accounts: accounts2, now }) };
     };
@@ -1219,6 +1239,7 @@ try {
         const done = variant2(text.id, "threads");
         assert.equal(done.status, "published");
         assert.equal(done.externalPostId, "th-m1");
+        assert.equal(done.externalUrl, "https://www.threads.com/@t/post/th-m1");
         assert.equal(done.pendingReason, null);
         assert.equal(r2Log.length, 0);
         return { routes: sent4.map((entry) => entry.route) };
@@ -1304,6 +1325,7 @@ try {
         const done = variant2(post.id, "instagram");
         assert.equal(done.status, "published");
         assert.equal(done.externalPostId, "ig-m1");
+        assert.equal(done.externalUrl, "https://www.instagram.com/p/ig-m1/");
         assert.deepEqual(
           r2Log.map((entry) => `${entry.method} ${entry.key === key}`),
           ["PUT true", "DELETE true"],
@@ -1313,6 +1335,26 @@ try {
         return { key };
       },
     );
+
+    await step("16b. A link that is not https is not stored: the published variant has no link", async () => {
+      const links: Record<string, string | null> = {};
+      for (const permalink of ["http://www.instagram.com/p/ig-m1/", "javascript:alert(1)", "not a url"]) {
+        const post = queued2("instagram", photo);
+        clock = post.time;
+        answers.ig = "FINISHED";
+        answers.igPermalink = permalink;
+        await pass2();
+        // The first pass makes the container; the check a minute later publishes it.
+        clock = new Date(clock.getTime() + 60_000);
+        await pass2();
+        const done = variant2(post.id, "instagram");
+        assert.equal(done.status, "published", done.error ?? "");
+        assert.equal(done.externalUrl, null, permalink);
+        links[permalink] = done.externalUrl;
+      }
+      answers.igPermalink = "https://www.instagram.com/p/ig-m1/";
+      return links;
+    });
 
     await step("17. Instagram container ERROR and the 24 h give-up fail, and both remove the object", async () => {
       for (const [answer, code, wait] of [
@@ -1559,18 +1601,15 @@ try {
           accounts2.setApp("instagram", { clientId: "ig-client-id", clientSecret: "ig-client-secret-0123456789" }),
         );
         const { variantId, key } = await publishedWithKept();
-        const newHost = {
-          platform: "instagram" as const,
-          mediaHost: { endpoint: `https://${R2}`, bucket: "new-bucket", publicBaseUrl: `https://${PUBLIC}` },
-        };
+        const newHost = { endpoint: `https://${R2}`, bucket: "new-bucket", publicBaseUrl: `https://${PUBLIC}` };
         failDeletes = 1;
         r2Log.length = 0;
-        assert.equal(await refusal(service2().beginConnect(newHost)), cleanupText);
+        assert.equal(await refusal(service2().saveMediaHost(newHost)), cleanupText);
         assert.deepEqual(r2Log, [{ method: "DELETE", key, bucket: "content-bucket" }], "No request to the new host.");
         assert.equal(JSON.parse(pendingRow(variantId) ?? "{}").hostedKey, key, "The key stays.");
         assert.equal(accounts2.mediaHostView().bucket, "content-bucket", "Nothing is saved.");
         r2Log.length = 0;
-        const saved = await Effect.runPromise(service2().beginConnect(newHost));
+        const saved = await Effect.runPromise(service2().saveMediaHost(newHost));
         assert.equal(saved.mediaHost?.bucket, "new-bucket");
         assert.deepEqual(
           r2Log.map((entry) => `${entry.method} ${entry.bucket}`),
@@ -1582,6 +1621,71 @@ try {
         return { key };
       },
     );
+
+    /** Waits until `ready` is true: a state, not a time. */
+    const until = async (ready: () => boolean) => {
+      while (!ready()) await new Promise((resolve) => setImmediate(resolve));
+    };
+    const heldHost = { endpoint: `https://${R2}`, bucket: "held-bucket", publicBaseUrl: `https://${PUBLIC}` };
+    const cancelledText = sourceText("error.content.mediaHostCancelled");
+
+    await step(
+      "20h. Cancel stops a held host check at once, saves nothing, and the probe file is still removed",
+      async () => {
+        const savedFile = await readFile(join(state2, CONTENT_MEDIA_HOST_FILE), "utf8");
+        let release = () => {};
+        holdPublic = new Promise((resolve) => {
+          release = resolve;
+        });
+        r2Log.length = 0;
+        const first = refusal(service2().saveMediaHost(heldHost));
+        await until(() => r2Log.some((entry) => entry.bucket === "public"));
+        // A second save while the first one runs replaces it: the first ends as cancelled.
+        const second = refusal(service2().saveMediaHost(heldHost));
+        assert.equal(await first, cancelledText);
+        await until(() => r2Log.filter((entry) => entry.bucket === "public").length === 2);
+        await Effect.runPromise(service2().cancelMediaHostCheck());
+        // The hold is never released: the call ended because of the cancel alone.
+        assert.equal(await second, cancelledText);
+        await until(() => bucket.size === 0);
+        // Each check made one probe file, and each one was removed. The DELETE of the first can come before
+        // the PUT of the second, so the requests are compared as a set.
+        assert.deepEqual(r2Log.map((entry) => `${entry.method} ${entry.bucket}`).sort(), [
+          "DELETE held-bucket",
+          "DELETE held-bucket",
+          "GET public",
+          "GET public",
+          "PUT held-bucket",
+          "PUT held-bucket",
+        ]);
+        assert.equal(accounts2.mediaHostView().bucket, "new-bucket", "Nothing is saved.");
+        assert.equal(await readFile(join(state2, CONTENT_MEDIA_HOST_FILE), "utf8"), savedFile);
+        // A cancel with no check that runs changes nothing.
+        assert.equal((await Effect.runPromise(service2().cancelMediaHostCheck())).mediaHost?.bucket, "new-bucket");
+        release();
+        holdPublic = null;
+        return { requests: r2Log.map((entry) => `${entry.method} ${entry.bucket}`) };
+      },
+    );
+
+    await step("20i. A public GET that never answers ends the check at the limit with mediaHostTimeout", async () => {
+      // ponytail: the limit is an option with the 60 s default, so the test sets it short; the real 60 s
+      // is not driven, because Effect's sleep reads the real clock and not the fake `now`.
+      hostCheckMs = 50;
+      ({ store: content2, accounts2, publisher2 } = build());
+      await Effect.runPromise(accounts2.loadMediaHost());
+      holdPublic = new Promise(() => {});
+      r2Log.length = 0;
+      assert.equal(await refusal(service2().saveMediaHost(heldHost)), sourceText("error.content.mediaHostTimeout"));
+      await until(() => bucket.size === 0);
+      assert.ok(r2Log.some((entry) => entry.method === "DELETE" && entry.bucket === "held-bucket"));
+      assert.equal(accounts2.mediaHostView().bucket, "new-bucket", "Nothing is saved.");
+      holdPublic = null;
+      hostCheckMs = undefined;
+      ({ store: content2, accounts2, publisher2 } = build());
+      await Effect.runPromise(accounts2.loadMediaHost());
+      return { requests: r2Log.map((entry) => `${entry.method} ${entry.bucket}`) };
+    });
 
     await step("20f. A retry is due now: a failed post moved to a future time publishes in one pass", async () => {
       const post = queued2("facebook_page", null);

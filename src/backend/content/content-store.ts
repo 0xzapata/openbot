@@ -71,7 +71,7 @@ export interface DueContentVariant {
 
 /** The result of one publish attempt that ends the attempt. */
 export type ContentVariantOutcome =
-  | { kind: "published"; externalPostId: string }
+  | { kind: "published"; externalPostId: string; externalUrl: string | null }
   | { kind: "failed"; code: string; message: string };
 
 /** The own values of one variant. A null body or media uses the post's own. */
@@ -605,10 +605,10 @@ export class ContentStore {
       const time = now.toISOString();
       if (outcome.kind === "published")
         db.prepare(
-          `UPDATE content_variants SET status = 'published', external_post_id = ?, published_at = ?, pending_data = ${KEEP_HOSTED_KEY},
+          `UPDATE content_variants SET status = 'published', external_post_id = ?, external_url = ?, published_at = ?, pending_data = ${KEEP_HOSTED_KEY},
              error_code = NULL, error = NULL, updated_at = ?, last_event_sequence = ?
            WHERE variant_id = ? AND status = 'publishing'`,
-        ).run(outcome.externalPostId, time, time, sequence, variantId);
+        ).run(outcome.externalPostId, outcome.externalUrl, time, time, sequence, variantId);
       else
         db.prepare(
           `UPDATE content_variants SET status = 'failed', error_code = ?, error = ?, pending_data = ${KEEP_HOSTED_KEY}, updated_at = ?,
@@ -1047,6 +1047,7 @@ function decodeVariant(row: DynamicRecord): ContentVariant[] {
       status: checkedColumn(row, "status", CONTENT_VARIANT_STATUSES),
       attempt: requiredNumberColumn(row, "attempt"),
       externalPostId: optionalStringColumn(row, "external_post_id"),
+      externalUrl: optionalStringColumn(row, "external_url"),
       errorCode: optionalStringColumn(row, "error_code"),
       error: optionalStringColumn(row, "error"),
       publishedAt: optionalStringColumn(row, "published_at"),

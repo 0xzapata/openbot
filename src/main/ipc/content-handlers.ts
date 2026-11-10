@@ -9,6 +9,7 @@ import {
   parseContentDeletePost,
   parseContentDisconnect,
   parseContentListPosts,
+  parseContentMediaHost,
   parseContentPublishNow,
   parseContentSchedulePost,
   parseContentUpdatePost,
@@ -24,6 +25,8 @@ export function contentIpcHandlers({ content }: ContentIpcDependencies): Pick<Ip
     content: {
       listAccounts: handler(() => runCauseEffect(content.listAccounts())),
       beginConnect: payloadHandler(parseContentBeginConnect, (input) => runCauseEffect(content.beginConnect(input))),
+      saveMediaHost: payloadHandler(parseContentMediaHost, (input) => runCauseEffect(content.saveMediaHost(input))),
+      cancelMediaHostCheck: handler(() => runCauseEffect(content.cancelMediaHostCheck())),
       disconnectAccount: payloadHandler(parseContentDisconnect, (input) =>
         runCauseEffect(content.disconnectAccount(input)),
       ),

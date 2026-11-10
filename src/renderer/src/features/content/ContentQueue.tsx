@@ -54,6 +54,7 @@ import { RoutineDateField } from "@openbot/ui/features/conversation/RoutineDateF
 import { RoutineTimeField } from "@openbot/ui/features/conversation/RoutineTimeField";
 import { useText } from "@openbot/ui/text";
 import { createMemo, createSignal, createStore, For, flush, Match, Show, Switch } from "solid-js";
+import { appPort } from "../../app-port";
 import type { ContentState } from "./content-context";
 
 const DONE_LIMIT = 5;
@@ -813,6 +814,8 @@ function ContentQueueRow(props: ContentQueueRowProps) {
                         : undefined
                     }
                     onToggle={(included) => props.onToggle(variant(), included)}
+                    link={variant().externalUrl}
+                    onOpenLink={(url) => void appPort().openUrl(url)}
                   />
                 )}
               </For>

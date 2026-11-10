@@ -21,6 +21,7 @@ const VARIANT = {
   status: "queued",
   attempt: 0,
   externalPostId: null,
+  externalUrl: null,
   errorCode: null,
   error: null,
   publishedAt: null,

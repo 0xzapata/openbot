@@ -12,6 +12,7 @@ import {
   type ContentDeletePostInput,
   type ContentDisconnectInput,
   type ContentListPostsInput,
+  type ContentMediaHostInput,
   type ContentPublishNowInput,
   type ContentSchedulePostInput,
   type ContentUpdatePostInput,
@@ -154,17 +155,15 @@ const mediaHost = z.strictObject({
   secretAccessKey: mediaHostKey.optional(),
 });
 
-const beginConnect = z
-  .strictObject({
-    platform,
-    clientId: z.string().trim().min(1).max(INPUT_LIMITS.mcpClientId).optional(),
-    clientSecret: z.string().trim().min(1).max(INPUT_LIMITS.mcpClientSecret).optional(),
-    mediaHost: mediaHost.optional(),
-  })
-  .refine(
-    (input) => input.mediaHost === undefined || input.platform === "instagram",
-    "Only Instagram has an image host.",
-  );
+export function parseContentMediaHost(value: unknown): ContentMediaHostInput {
+  return parse(mediaHost, value, "image host");
+}
+
+const beginConnect = z.strictObject({
+  platform,
+  clientId: z.string().trim().min(1).max(INPUT_LIMITS.mcpClientId).optional(),
+  clientSecret: z.string().trim().min(1).max(INPUT_LIMITS.mcpClientSecret).optional(),
+});
 
 export function parseContentBeginConnect(value: unknown): ContentBeginConnectInput {
   return parse(beginConnect, value, "sign-in");

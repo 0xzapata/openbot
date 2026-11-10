@@ -129,7 +129,8 @@ export function oauthSecrets(): { state: string; codeVerifier: string; codeChall
 
 /**
  * One HTTP request. A throw or a timeout becomes `network`, or `unknown-result` for a request that can
- * make a post (`creates`): the network may have the post, so nothing sends it again by itself.
+ * make a post (`creates`): the network may have the post, so nothing sends it again by itself. An
+ * interrupted request is aborted at once.
  */
 export function contentRequest(
   options: Pick<ContentAdapterOptions, "fetch">,
@@ -139,7 +140,8 @@ export function contentRequest(
 ): Effect.Effect<Response, ContentAdapterError> {
   const { timeoutMs = CONTENT_REQUEST_TIMEOUT_MS, creates = false, ...request } = init;
   return Effect.tryPromise({
-    try: () => options.fetch(url, { ...request, signal: AbortSignal.timeout(timeoutMs) }),
+    try: (interrupted) =>
+      options.fetch(url, { ...request, signal: AbortSignal.any([interrupted, AbortSignal.timeout(timeoutMs)]) }),
     catch: () =>
       creates
         ? new ContentAdapterError({

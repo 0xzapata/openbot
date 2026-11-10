@@ -55,6 +55,8 @@ export const messages = defineMessages("content", {
   "content.variant.skipped": "Skipped",
   "content.variant.processing": "Processing",
   "content.variant.processingNote": "{network} is processing the media",
+  "content.variant.view": "View on {network}",
+  "content.variant.noLink": "{network}: Published. {network} sent no link.",
 
   // Row actions
   "content.action.approve": "Approve",
@@ -204,17 +206,25 @@ export const messages = defineMessages("content", {
   "content.accounts.notConnected": "Not connected",
   "content.accounts.connect": "Connect",
   "content.accounts.connecting": "Waiting for {network}…",
+  "content.accounts.waitingHint":
+    "If {network} shows an error about the redirect URI, your app does not accept the address above. Cancel and check the app.",
   "content.accounts.reconnect": "Reconnect",
   "content.accounts.disconnect": "Disconnect",
   "content.accounts.clientId": "{network} app client ID",
   "content.accounts.clientIdHint": "From your app in the {network} developer portal.",
   "content.accounts.clientSecret": "{network} app client secret",
   "content.accounts.clientSecretHint": "OpenBot keeps it on this computer and does not show it again.",
+  "content.accounts.redirectUri": "Redirect URI",
+  "content.accounts.redirectUriHint":
+    "Add this exact address to your {network} app's redirect URIs. If {network} does not accept it, OpenBot cannot sign in to {network} yet.",
   "content.network.needsHost": "Needs an image host",
   "content.accounts.mediaHost.title": "Image host",
   "content.accounts.mediaHost.description":
     "Instagram takes an image only from a public address. OpenBot puts the image of each Instagram or Threads post in your Cloudflare R2 bucket while it posts, and removes it after.",
   "content.accounts.mediaHost.configured": "Image host set up",
+  "content.accounts.mediaHost.needed": "Needed for Instagram, and for Threads posts with an image",
+  "content.accounts.mediaHost.checking": "Checking the image host…",
+  "content.accounts.mediaHost.cancelled": "Not saved. The check was stopped.",
   "content.accounts.mediaHost.endpoint": "R2 endpoint",
   "content.accounts.mediaHost.bucket": "Bucket",
   "content.accounts.mediaHost.publicBaseUrl": "Public base URL",

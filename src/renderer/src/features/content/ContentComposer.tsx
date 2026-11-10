@@ -53,6 +53,7 @@ import { RoutineDateField } from "@openbot/ui/features/conversation/RoutineDateF
 import { RoutineTimeField } from "@openbot/ui/features/conversation/RoutineTimeField";
 import { useText } from "@openbot/ui/text";
 import { createMemo, createStore, For, flush, onSettled, Show, snapshot, untrack } from "solid-js";
+import { appPort } from "../../app-port";
 import type { ComposerForm, ComposerNetwork, ContentState } from "./content-context";
 
 type BlockReason =
@@ -193,6 +194,13 @@ export function ContentComposer(props: ContentComposerProps) {
     post()?.variants.some((variant) => variant.status === "publishing")
       ? t("error.content.publishing")
       : t("error.content.published");
+  /** The published networks that sent a link, one "View on" link each. */
+  const postLinks = () =>
+    (post()?.variants ?? []).flatMap((variant) =>
+      variant.status === "published" && variant.externalUrl
+        ? [{ id: variant.id, platform: variant.platform, url: variant.externalUrl }]
+        : [],
+    );
   const author = () => props.agents.find((agent) => agent.id === post()?.authorAgentId);
   const variantStatus = (platform: ContentPlatform) =>
     post()?.variants.find((variant) => variant.platform === platform)?.status;
@@ -634,6 +642,17 @@ export function ContentComposer(props: ContentComposerProps) {
           <AlertContent>
             <AlertDescription id="content-composer-locked">{lockedText()}</AlertDescription>
           </AlertContent>
+          <Show when={postLinks().length > 0}>
+            <AlertActions>
+              <For each={postLinks()} keyed={(variant) => variant.id}>
+                {(variant) => (
+                  <Button variant="link" size="sm" onClick={() => void appPort().openUrl(variant().url)}>
+                    {t("content.variant.view", { network: CONTENT_NETWORK_NAMES[variant().platform] })}
+                  </Button>
+                )}
+              </For>
+            </AlertActions>
+          </Show>
         </Alert>
       </Show>
 
