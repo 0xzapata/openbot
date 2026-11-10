@@ -619,6 +619,7 @@ export const messages = {
   "server.update.reason.browserControl": "управление браузером агентом",
   "server.update.reason.updateOperation": "другой шаг обновления",
   "server.update.reason.initialization": "запуск OpenBot",
+  "server.update.reason.contentPost": "публикуемый пост",
   "server.update.reason.other": "другая работа",
   "server.restartNotice.waitingTitle": "{name} перезапустится, чтобы установить обновление",
   "server.restartNotice.waitingVersionTitle": "{name} перезапустится, чтобы установить OpenBot {version}",

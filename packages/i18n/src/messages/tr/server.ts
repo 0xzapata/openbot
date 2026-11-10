@@ -612,6 +612,7 @@ export const messages = {
   "server.update.reason.browserControl": "bir ajan tarafından tarayıcı kontrolü",
   "server.update.reason.updateOperation": "başka bir güncelleme adımı",
   "server.update.reason.initialization": "OpenBot'un başlatılması",
+  "server.update.reason.contentPost": "yayımlanan bir gönderi",
   "server.update.reason.other": "diğer çalışmalar",
   // Katılınan bir sunucu bir güncellemeye yeniden başladığında her üyeye bir bildirim. {name} sunucudur.
   "server.restartNotice.waitingTitle": "{name}, bir güncellemeyi yüklemek için yeniden başlatılacak",

@@ -1185,6 +1185,7 @@ export const messages = {
   "mobile.server.update.reason.browserControl": "에이전트의 브라우저 제어",
   "mobile.server.update.reason.updateOperation": "다른 업데이트 단계",
   "mobile.server.update.reason.initialization": "OpenBot 시작",
+  "mobile.server.update.reason.contentPost": "게시 중인 게시물",
   "mobile.server.update.reason.other": "기타 작업",
   "mobile.server.update.actionFailed": "서버 작업에 실패했어요.",
   "mobile.server.update.unavailable": "OpenBot 업데이트를 보려면 이 서버에 연결하세요.",

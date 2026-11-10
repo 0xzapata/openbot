@@ -37,6 +37,7 @@ const RESTART_REASON_KEYS: Record<string, MobileTextKey> = {
   "browser-control": "mobile.server.update.reason.browserControl",
   "update-operation": "mobile.server.update.reason.updateOperation",
   initialization: "mobile.server.update.reason.initialization",
+  "content-post": "mobile.server.update.reason.contentPost",
 };
 
 const RELEASE_PATH_KEYS = {

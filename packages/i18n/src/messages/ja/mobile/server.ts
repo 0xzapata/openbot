@@ -1213,6 +1213,7 @@ export const messages = {
   "mobile.server.update.reason.browserControl": "エージェントによるブラウザー操作",
   "mobile.server.update.reason.updateOperation": "別のアップデート手順",
   "mobile.server.update.reason.initialization": "OpenBot の起動",
+  "mobile.server.update.reason.contentPost": "公開中の投稿",
   "mobile.server.update.reason.other": "その他の作業",
   "mobile.server.update.actionFailed": "サーバーの操作に失敗しました。",
   "mobile.server.update.unavailable": "OpenBot のアップデートを確認するには、このサーバーに接続してください。",

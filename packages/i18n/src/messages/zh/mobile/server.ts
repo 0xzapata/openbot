@@ -1150,6 +1150,7 @@ export const messages = {
   "mobile.server.update.reason.browserControl": "助手进行的浏览器控制",
   "mobile.server.update.reason.updateOperation": "另一个更新步骤",
   "mobile.server.update.reason.initialization": "OpenBot 启动过程",
+  "mobile.server.update.reason.contentPost": "正在发布的帖子",
   "mobile.server.update.reason.other": "其他工作",
   "mobile.server.update.actionFailed": "服务器操作失败。",
   "mobile.server.update.unavailable": "请连接该服务器以查看其 OpenBot 更新。",

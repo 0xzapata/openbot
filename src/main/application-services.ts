@@ -3803,7 +3803,6 @@ export async function createApplicationServices({
   const describeRestartReadiness = (): RestartReadiness =>
     checkRestartReadiness({
       // A workflow model step lives in this process only; agent steps are queued deliveries.
-      // ponytail: "content-post" shows as "other work"; add its label with Loupe's copy.
       agentWork: [
         ...service.hasActiveWork(),
         ...(workflowRuntime.working() ? ["routine-run"] : []),

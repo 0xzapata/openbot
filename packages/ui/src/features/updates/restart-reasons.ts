@@ -14,6 +14,7 @@ const RESTART_REASON_LABELS: Record<string, AppTextKey> = {
   "browser-control": "server.update.reason.browserControl",
   "update-operation": "server.update.reason.updateOperation",
   initialization: "server.update.reason.initialization",
+  "content-post": "server.update.reason.contentPost",
 };
 
 /** A reason from a newer version has no label here yet. */
