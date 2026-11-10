@@ -27,11 +27,15 @@ import { AgentStore } from "../src/backend/agent-store";
 import { type ContentPostInput, ContentStateError, ContentStore } from "../src/backend/content/content-store";
 import { runCauseEffect } from "../src/backend/effect-boundary";
 import { OpenBotDatabase } from "../src/backend/openbot-database";
-import { CONTENT_REDIRECT_URI, ContentAccounts } from "../src/main/content/content-accounts";
+import { CONTENT_MEDIA_HOST_FILE, CONTENT_REDIRECT_URI, ContentAccounts } from "../src/main/content/content-accounts";
 import type { ContentFetch } from "../src/main/content/content-adapter";
+import { R2MediaHost } from "../src/main/content/content-media-host";
 import { ContentPublisher } from "../src/main/content/content-publisher";
+import { contentPostView } from "../src/main/content/content-service";
 import { escapeLinkedInCommentary, LINKEDIN_API_VERSION, LinkedInAdapter } from "../src/main/content/linkedin-adapter";
+import { FacebookPageAdapter, InstagramAdapter, ThreadsAdapter } from "../src/main/content/meta-adapters";
 import { X_SCOPES, XAdapter } from "../src/main/content/x-adapter";
+import { YouTubeAdapter } from "../src/main/content/youtube-adapter";
 import type { CallbackAnswer } from "../src/main/loopback-callback-server";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -259,6 +263,10 @@ try {
     cipher,
     appsPath: join(root, "state", "openbot-content-apps-v1.json"),
     adapters: [new XAdapter(adapterOptions), new LinkedInAdapter(adapterOptions)],
+    mediaHostPath: join(root, "state", "openbot-content-media-host-v1.json"),
+    mediaHost: () => {
+      throw new Error("This check sets up no image host.");
+    },
     openExternal: async (url) => {
       openedUrl = new URL(url);
       const page = openedUrl;
@@ -936,6 +944,541 @@ try {
       callbacks: callbackAnswers.map(({ name, answer }) => [name, answer.status]),
     };
   });
+
+  // Step 4: all six adapters and the image host, on a second profile, so the earlier X and LinkedIn
+  // checks stay as they are. The networks and the R2 bucket are a second fake `fetch`.
+  const state2 = join(root, "state2");
+  const database2 = new OpenBotDatabase(state2);
+  try {
+    await runCauseEffect(new AgentStore(state2, join(root, "home2"), database2).initialize());
+    const R2 = "r2.fake.example.test";
+    const PUBLIC = "pub.fake.example.test";
+    const R2_SECRET = "test-r2-secret-access-key-0123456789";
+    const bucket = new Map<string, Buffer>();
+    let failDeletes = 0;
+    const r2Log: Array<{ method: string; key: string }> = [];
+    const sent4: Array<{ route: string; body: string }> = [];
+    const answers = { ig: "IN_PROGRESS", th: "FINISHED", yt: "processing" };
+    const fetch4: ContentFetch = async (url, init) => {
+      const parsed = new URL(url);
+      const method = init.method ?? "GET";
+      if (parsed.host === R2) {
+        const key = decodeURIComponent(parsed.pathname.replace(/^\/content-bucket\//u, ""));
+        r2Log.push({ method, key });
+        if (method === "PUT") {
+          assert.ok(init.body instanceof Uint8Array);
+          bucket.set(key, Buffer.from(init.body));
+          return new Response(null, { status: 200 });
+        }
+        if (failDeletes > 0) {
+          failDeletes -= 1;
+          return new Response(null, { status: 503 });
+        }
+        bucket.delete(key);
+        return new Response(null, { status: 204 });
+      }
+      if (parsed.host === PUBLIC) {
+        r2Log.push({ method: "GET", key: parsed.pathname.slice(1) });
+        const object = bucket.get(parsed.pathname.slice(1));
+        return object ? new Response(new Uint8Array(object), { status: 200 }) : new Response(null, { status: 404 });
+      }
+      const route = `${method} ${parsed.host}${parsed.pathname}`;
+      sent4.push({ route, body: bodyText(init.body) });
+      switch (route) {
+        case "POST graph.instagram.com/v24.0/ig-1/media":
+          return json(200, { id: "ig-c1" });
+        case "GET graph.instagram.com/v24.0/ig-c1":
+          return json(200, { status_code: answers.ig, status: "Error: the image could not be read" });
+        case "POST graph.instagram.com/v24.0/ig-1/media_publish":
+          return json(200, { id: "ig-m1" });
+        case "GET graph.instagram.com/v24.0/ig-m1":
+          return json(200, { permalink: "https://www.instagram.com/p/ig-m1/" });
+        case "POST graph.threads.com/v1.0/th-1/threads":
+          return json(200, { id: "th-c1" });
+        case "GET graph.threads.com/v1.0/th-c1":
+          return json(200, { status: answers.th });
+        case "POST graph.threads.com/v1.0/th-1/threads_publish":
+          return json(200, { id: "th-m1" });
+        case "GET graph.threads.com/v1.0/th-m1":
+          return json(200, { permalink: "https://www.threads.com/@t/post/th-m1" });
+        case "POST graph.facebook.com/v24.0/page-1/feed":
+          return json(200, { id: "page-1_1" });
+        case "POST www.googleapis.com/upload/youtube/v3/videos":
+          return new Response(null, {
+            status: 200,
+            headers: { location: `https://www.googleapis.com/upload/youtube/v3/videos?upload_id=s1` },
+          });
+        case "PUT www.googleapis.com/upload/youtube/v3/videos":
+          return json(201, { id: "vid-1" });
+        case "GET www.googleapis.com/youtube/v3/videos":
+          return json(200, {
+            items: [
+              {
+                id: "vid-1",
+                status: { uploadStatus: "uploaded" },
+                processingDetails: { processingStatus: answers.yt },
+              },
+            ],
+          });
+      }
+      return json(404, { error: { message: `No fake route ${route}`, code: 803 } });
+    };
+    const options4 = { fetch: fetch4, now, sleep: async () => {} };
+    let arms2 = 0;
+    const build = () => {
+      const store = new ContentStore(
+        database2,
+        () => {
+          arms2 += 1;
+        },
+        () => {},
+        () => accounts2.platforms,
+      );
+      const accounts2: ContentAccounts = new ContentAccounts({
+        store,
+        cipher,
+        appsPath: join(state2, "openbot-content-apps-v1.json"),
+        adapters: [
+          new XAdapter(options4),
+          new LinkedInAdapter(options4),
+          new InstagramAdapter(options4),
+          new ThreadsAdapter(options4),
+          new FacebookPageAdapter(options4),
+          new YouTubeAdapter(options4),
+        ],
+        mediaHostPath: join(state2, CONTENT_MEDIA_HOST_FILE),
+        mediaHost: (settings) => new R2MediaHost({ fetch: fetch4, now, settings }),
+        openExternal: async () => {},
+        listen: async () => ({ close: async () => {} }),
+        now,
+      });
+      return { store, accounts2, publisher2: new ContentPublisher({ store, accounts: accounts2, now }) };
+    };
+    let { store: content2, accounts2, publisher2 } = build();
+    const pass2 = () => Effect.runPromise(publisher2.processDue(clock, () => true));
+    const variant2 = (postId: string, platform: ContentPlatform) => {
+      const found = content2.readPost(postId)?.variants.find((candidate) => candidate.platform === platform);
+      assert.ok(found);
+      return found;
+    };
+    const pendingRow = (variantId: string) => {
+      const value = database2.connection
+        .prepare("SELECT pending_data FROM content_variants WHERE variant_id = ?")
+        .get(variantId)?.pending_data;
+      return typeof value === "string" ? value : null;
+    };
+    const seed = (platform: ContentPlatform, externalAccountId: string) =>
+      content2.saveAccount(
+        {
+          platform,
+          externalAccountId,
+          handle: `${platform}-handle`,
+          displayName: null,
+          tokenCiphertext: cipher.encrypt(`${platform}-token-0123456789`).toString("base64"),
+          refreshCiphertext: null,
+          scopes: "",
+          expiresAt: null,
+        },
+        clock,
+      );
+    await mkdir(content2.mediaRoot, { recursive: true });
+    const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1]);
+    await writeFile(join(content2.mediaRoot, "photojpeg.jpg"), JPEG);
+    await writeFile(join(content2.mediaRoot, "photopng.png"), PNG);
+    // A few KB of fake video bytes: nothing reads inside them.
+    await writeFile(join(content2.mediaRoot, "clipvideo.mp4"), Buffer.alloc(2048, 7));
+    const photo: ContentMedia = {
+      id: "m-jpg",
+      kind: "image",
+      mimeType: "image/jpeg",
+      bytes: JPEG.length,
+      name: "holiday-photo.jpg",
+      file: "photojpeg.jpg",
+    };
+    const pngPhoto: ContentMedia = { ...image, id: "m-png", name: "holiday-photo.png", file: "photopng.png" };
+    const clip: ContentMedia = {
+      id: "m-mp4",
+      kind: "video",
+      mimeType: "video/mp4",
+      bytes: 2048,
+      name: "clip.mp4",
+      file: "clipvideo.mp4",
+    };
+    const only = (platform: ContentPlatform, own: Partial<{ body: string; title: string; media: ContentMedia }> = {}) =>
+      Object.fromEntries(
+        CONTENT_PLATFORM_KEYS.map((key) => [
+          key,
+          key === platform
+            ? { body: own.body ?? null, title: own.title ?? null, media: own.media ?? null, status: "draft" as const }
+            : skip,
+        ]),
+      );
+    /** A post of one network, queued for one minute later. No upload may happen here. */
+    const queued2 = (
+      platform: ContentPlatform,
+      media: ContentMedia | null,
+      own: Partial<{ title: string; media: ContentMedia }> = {},
+    ) => {
+      const before = r2Log.length;
+      const post = content2.createPost(
+        {
+          body: `Post for ${platform}`,
+          media,
+          approvalState: "none",
+          scheduledFor: null,
+          timezone: "UTC",
+          authorAgentId: null,
+          variants: only(platform, own),
+        },
+        clock,
+      );
+      const time = new Date(clock.getTime() + 60_000);
+      content2.schedulePost(post.id, time.toISOString(), clock);
+      assert.equal(r2Log.length, before, "Compose and schedule upload nothing.");
+      return { id: post.id, time };
+    };
+    const hostedPuts = () => r2Log.filter((entry) => entry.method === "PUT" && !entry.key.startsWith("t/probe-"));
+    for (const [platform, id] of [
+      ["instagram", "ig-1"],
+      ["threads", "th-1"],
+      ["facebook_page", "page-1"],
+      ["youtube", "UC1"],
+    ] as const)
+      seed(platform, id);
+
+    await step(
+      "13. No image host: approve queues the five networks with a usable path and skips Instagram",
+      async () => {
+        assert.deepEqual(accounts2.platforms, ["x", "linkedin", "threads", "facebook_page", "youtube"]);
+        const time = new Date(clock.getTime() + 60 * 60_000);
+        const post = content2.createPost(
+          {
+            body: "All networks",
+            media: photo,
+            approvalState: "pending",
+            scheduledFor: time.toISOString(),
+            timezone: "UTC",
+            authorAgentId: agent.id,
+            variants: { youtube: { body: null, title: "A title", media: clip, status: "draft" } },
+          },
+          clock,
+        );
+        content2.approvePost(post.id, clock);
+        assert.deepEqual(
+          Object.fromEntries(
+            (content2.readPost(post.id)?.variants ?? []).map((variant) => [variant.platform, variant.status]),
+          ),
+          {
+            x: "queued",
+            linkedin: "queued",
+            instagram: "skipped",
+            threads: "queued",
+            facebook_page: "queued",
+            youtube: "queued",
+          },
+        );
+        content2.publishNow(post.id, clock);
+        assert.equal(r2Log.length, 0, "Approve and publish-now upload nothing.");
+        // Not deleted: a delete removes the media file that later steps use.
+        content2.unschedulePost(post.id, clock);
+        return { platforms: accounts2.platforms };
+      },
+    );
+
+    await step(
+      "14. No image host: a Threads image fails invalid with no request; a Threads text post publishes",
+      async () => {
+        const withImage = queued2("threads", pngPhoto);
+        clock = withImage.time;
+        await pass2();
+        const failed = variant2(withImage.id, "threads");
+        assert.equal(failed.status, "failed");
+        assert.equal(failed.errorCode, "invalid");
+        assert.equal(failed.error, "Threads needs an image host for a post with an image.");
+        assert.equal(sent4.length + r2Log.length, 0, "Nothing was sent.");
+        const text = queued2("threads", null);
+        clock = text.time;
+        await pass2();
+        const waiting = variant2(text.id, "threads");
+        assert.equal(waiting.status, "publishing");
+        assert.equal(waiting.pendingReason, "processing");
+        assert.equal(
+          contentPostView(content2.readPost(text.id) ?? assert.fail()).variants.find((v) => v.platform === "threads")
+            ?.pendingReason,
+          "processing",
+        );
+        assert.equal(
+          publisher2.nextDueAt(),
+          new Date(clock.getTime() + 30_000).toISOString(),
+          "The timer waits for the check.",
+        );
+        clock = new Date(clock.getTime() + 30_000);
+        await pass2();
+        const done = variant2(text.id, "threads");
+        assert.equal(done.status, "published");
+        assert.equal(done.externalPostId, "th-m1");
+        assert.equal(done.pendingReason, null);
+        assert.equal(r2Log.length, 0);
+        return { routes: sent4.map((entry) => entry.route) };
+      },
+    );
+
+    await step(
+      "15. Save the image host: probe PUT, public GET, DELETE; keys encrypted; then approve queues six",
+      async () => {
+        await Effect.runPromise(
+          accounts2.saveMediaHost({
+            endpoint: `https://${R2}`,
+            bucket: "content-bucket",
+            publicBaseUrl: `https://${PUBLIC}`,
+            accessKeyId: "test-access-key",
+            secretAccessKey: R2_SECRET,
+          }),
+        );
+        assert.deepEqual(
+          r2Log.map((entry) => entry.method),
+          ["PUT", "GET", "DELETE"],
+        );
+        assert.match(r2Log[0]?.key ?? "", /^t\/probe-[0-9a-f]{32}\.txt$/u);
+        assert.equal(bucket.size, 0);
+        const file = await readFile(join(state2, CONTENT_MEDIA_HOST_FILE), "utf8");
+        assert.ok(!file.includes(R2_SECRET) && !file.includes("test-access-key") && !file.includes(R2));
+        assert.deepEqual(accounts2.mediaHostView(), {
+          configured: true,
+          endpoint: `https://${R2}`,
+          bucket: "content-bucket",
+          publicBaseUrl: `https://${PUBLIC}`,
+          hasKeys: true,
+        });
+        assert.ok(accounts2.platforms.includes("instagram"));
+        const post = content2.createPost(
+          {
+            body: "All six",
+            media: photo,
+            approvalState: "pending",
+            scheduledFor: new Date(clock.getTime() + 3_600_000).toISOString(),
+            timezone: "UTC",
+            authorAgentId: agent.id,
+            variants: { youtube: { body: null, title: "T", media: clip, status: "draft" } },
+          },
+          clock,
+        );
+        const before = r2Log.length;
+        content2.approvePost(post.id, clock);
+        assert.equal(r2Log.length, before, "Approve uploads nothing.");
+        assert.ok((content2.readPost(post.id)?.variants ?? []).every((variant) => variant.status === "queued"));
+        // Not deleted: a delete removes the media file that later steps use.
+        content2.unschedulePost(post.id, clock);
+        return { probe: r2Log.map((entry) => entry.method) };
+      },
+    );
+
+    await step(
+      "16. Instagram: one PUT, the key recorded before it, pending processing, DELETE after FINISHED",
+      async () => {
+        r2Log.length = 0;
+        const post = queued2("instagram", photo);
+        clock = post.time;
+        answers.ig = "IN_PROGRESS";
+        await pass2();
+        const variant = variant2(post.id, "instagram");
+        assert.equal(variant.status, "publishing", variant.error ?? "");
+        assert.equal(variant.pendingReason, "processing");
+        assert.equal(hostedPuts().length, 1, "Exactly one upload.");
+        const key = hostedPuts()[0]?.key ?? "";
+        assert.match(key, /^t\/[0-9a-f]{32}\.jpg$/u);
+        for (const part of ["holiday", "photo", post.id, variant.id, agent.id, "ig-1"]) assert.ok(!key.includes(part));
+        assert.equal(JSON.parse(pendingRow(variant.id) ?? "{}").hostedKey, key, "The key is recorded.");
+        assert.ok(bucket.has(key));
+        const container = sent4.find((entry) => entry.route === "POST graph.instagram.com/v24.0/ig-1/media");
+        assert.equal(new URLSearchParams(container?.body).get("image_url"), `https://${PUBLIC}/${key}`);
+        assert.equal(publisher2.nextDueAt(), new Date(clock.getTime() + 60_000).toISOString());
+        const early = r2Log.length + sent4.length;
+        await pass2();
+        assert.equal(r2Log.length + sent4.length, early, "Nothing is due before the check time.");
+        clock = new Date(clock.getTime() + 60_000);
+        answers.ig = "FINISHED";
+        await pass2();
+        const done = variant2(post.id, "instagram");
+        assert.equal(done.status, "published");
+        assert.equal(done.externalPostId, "ig-m1");
+        assert.deepEqual(
+          r2Log.map((entry) => `${entry.method} ${entry.key === key}`),
+          ["PUT true", "DELETE true"],
+        );
+        assert.equal(bucket.size, 0);
+        assert.equal(pendingRow(variant.id), null, "The key is cleared after the removal.");
+        return { key };
+      },
+    );
+
+    await step("17. Instagram container ERROR and the 24 h give-up fail, and both remove the object", async () => {
+      for (const [answer, code, wait] of [
+        ["ERROR", "rejected", 60_000],
+        ["IN_PROGRESS", "unknown-result", 24 * 60 * 60_000 + 60_000],
+      ] as const) {
+        r2Log.length = 0;
+        const post = queued2("instagram", photo);
+        clock = post.time;
+        answers.ig = "IN_PROGRESS";
+        await pass2();
+        answers.ig = answer;
+        clock = new Date(clock.getTime() + wait);
+        await pass2();
+        const failed = variant2(post.id, "instagram");
+        assert.equal(failed.status, "failed");
+        assert.equal(failed.errorCode, code);
+        assert.deepEqual(
+          r2Log.map((entry) => entry.method),
+          ["PUT", "DELETE"],
+        );
+        assert.equal(bucket.size, 0);
+        assert.equal(pendingRow(failed.id), null);
+      }
+      return { checked: 2 };
+    });
+
+    await step(
+      "18. A failed DELETE keeps the post published and the key recorded; the startup sweep removes it",
+      async () => {
+        r2Log.length = 0;
+        const post = queued2("threads", pngPhoto);
+        clock = post.time;
+        answers.th = "IN_PROGRESS";
+        await pass2();
+        failDeletes = 1;
+        answers.th = "FINISHED";
+        clock = new Date(clock.getTime() + 30_000);
+        await pass2();
+        const done = variant2(post.id, "threads");
+        assert.equal(done.status, "published");
+        const key = JSON.parse(pendingRow(done.id) ?? "{}").hostedKey;
+        assert.match(key, /^t\/[0-9a-f]{32}\.png$/u);
+        assert.ok(bucket.has(key));
+        assert.ok(
+          logs.some((line) => line.includes("could not be removed") && line.includes(key)),
+          `A warning names the key. ${logs.slice(-3).join(" | ")}`,
+        );
+        ({ store: content2, accounts2, publisher2 } = build());
+        await Effect.runPromise(accounts2.loadMediaHost());
+        await Effect.runPromise(publisher2.releaseHostedMedia());
+        assert.equal(bucket.size, 0);
+        assert.equal(pendingRow(done.id), null);
+        return { key };
+      },
+    );
+
+    await step(
+      "19. Crash after the upload: restart fails the variant, keeps the key, and the sweep removes the object",
+      async () => {
+        r2Log.length = 0;
+        const post = queued2("instagram", photo);
+        clock = post.time;
+        const variant = variant2(post.id, "instagram");
+        // What the publisher does before the container request, then the process stops.
+        assert.ok(content2.claimVariant(variant.id, null, clock));
+        const key = "t/0123456789abcdef0123456789abcdef.jpg";
+        content2.setHostedKey(variant.id, key, clock);
+        const host = accounts2.mediaHost();
+        assert.ok(host);
+        await Effect.runPromise(host.put({ bytes: new Uint8Array(JPEG), mimeType: "image/jpeg" }, key));
+        assert.ok(bucket.has(key));
+        ({ store: content2, accounts2, publisher2 } = build());
+        assert.equal(content2.recoverInterrupted(clock), 1);
+        const failed = variant2(post.id, "instagram");
+        assert.equal(failed.status, "failed");
+        assert.equal(failed.errorCode, "unknown-result");
+        assert.equal(JSON.parse(pendingRow(failed.id) ?? "{}").hostedKey, key, "The key stays for the sweep.");
+        await Effect.runPromise(accounts2.loadMediaHost());
+        await Effect.runPromise(publisher2.releaseHostedMedia());
+        assert.equal(bucket.has(key), false);
+        assert.equal(pendingRow(failed.id), null);
+        return { key };
+      },
+    );
+
+    await step("20. A recorded key outside the content pattern is never deleted, and stays logged", async () => {
+      const post = queued2("instagram", photo);
+      const variant = variant2(post.id, "instagram");
+      assert.ok(content2.claimVariant(variant.id, null, clock));
+      content2.setHostedKey(variant.id, "user-assets/logo.png", clock);
+      content2.finishVariant(variant.id, { kind: "failed", code: "unknown-result", message: "x" }, clock);
+      r2Log.length = 0;
+      await Effect.runPromise(publisher2.releaseHostedMedia());
+      assert.equal(r2Log.length, 0, "No DELETE is sent.");
+      assert.equal(JSON.parse(pendingRow(variant.id) ?? "{}").hostedKey, "user-assets/logo.png");
+      assert.ok(logs.some((line) => line.includes("could not be removed") && line.includes("user-assets/logo.png")));
+      // Clear the bad row, so a later sweep in this run has nothing to try.
+      database2.connection
+        .prepare("UPDATE content_variants SET pending_data = NULL WHERE variant_id = ?")
+        .run(variant.id);
+      return { refused: "user-assets/logo.png" };
+    });
+
+    await step(
+      "21. YouTube: publishing -> pending (processing) -> published across passes; no upload to the host",
+      async () => {
+        r2Log.length = 0;
+        const post = queued2("youtube", null, { title: "Launch video", media: clip });
+        clock = post.time;
+        answers.yt = "processing";
+        await pass2();
+        assert.equal(variant2(post.id, "youtube").pendingReason, "processing");
+        assert.equal(publisher2.nextDueAt(), new Date(clock.getTime() + 60_000).toISOString());
+        clock = new Date(clock.getTime() + 60_000);
+        await pass2();
+        assert.equal(variant2(post.id, "youtube").status, "publishing");
+        answers.yt = "succeeded";
+        clock = new Date(clock.getTime() + 60_000);
+        await pass2();
+        const done = variant2(post.id, "youtube");
+        assert.equal(done.status, "published");
+        assert.equal(done.externalPostId, "vid-1");
+        assert.equal(r2Log.length, 0);
+        return { video: done.externalPostId };
+      },
+    );
+
+    await step(
+      "22. Decision B for Facebook: a disconnected Page keeps its variant queued, then fails signed-out",
+      async () => {
+        const textPost = queued2("facebook_page", null);
+        clock = textPost.time;
+        await pass2();
+        assert.equal(variant2(textPost.id, "facebook_page").externalPostId, "page-1_1");
+        const post = queued2("facebook_page", null);
+        const account = content2.connectedAccount("facebook_page");
+        assert.ok(account);
+        content2.disconnectAccount(account.id, clock);
+        assert.equal(variant2(post.id, "facebook_page").status, "queued");
+        clock = post.time;
+        await pass2();
+        const failed = variant2(post.id, "facebook_page");
+        assert.equal(failed.errorCode, "signed-out");
+        assert.equal(failed.error, "Sign in to Facebook again.");
+        return { error: failed.error };
+      },
+    );
+
+    await step("23. Privacy totals: every host upload belongs to an Instagram or Threads image publish", async () => {
+      const text = [
+        ...database2.connection
+          .prepare("SELECT COALESCE(error, '') || COALESCE(pending_data, '') AS t FROM content_variants")
+          .all()
+          .map((row) => String(row.t)),
+        ...database2.connection
+          .prepare("SELECT payload_json AS t FROM orchestration_events")
+          .all()
+          .map((row) => String(row.t)),
+        ...logs,
+      ].join("\n");
+      assert.ok(!text.includes(R2_SECRET) && !text.includes("test-access-key"));
+      assert.equal(globalFetchCalls, 0);
+      return { arms: arms2 };
+    });
+  } finally {
+    database2.close();
+  }
 
   report.passed = true;
 } finally {

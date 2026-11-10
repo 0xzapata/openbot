@@ -58,6 +58,7 @@ const ISSUE_TEXT: Record<ContentVariantIssue, string> = {
   "needs-title": "This network needs a title.",
   "images-only": "This network takes only images.",
   "video-only": "This network takes only a video.",
+  "angle-brackets": "YouTube does not take < or > in the title or the description.",
 };
 
 export interface ContentToolDependencies {

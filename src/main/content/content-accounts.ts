@@ -8,7 +8,12 @@
  */
 
 import { readFile, rm } from "node:fs/promises";
-import { type ContentPlatform, isContentPlatform } from "@openbot/contracts/ipc-content";
+import {
+  type ContentMediaHostInput,
+  type ContentMediaHostView,
+  type ContentPlatform,
+  isContentPlatform,
+} from "@openbot/contracts/ipc-content";
 import { sourceText } from "@openbot/i18n/source";
 import { registerSecretValue } from "@openbot/logging";
 import { Deferred, Effect, Schema, Semaphore } from "effect";
@@ -25,8 +30,15 @@ import type { LanguageService } from "../language-service";
 import { type CallbackAnswer, startLoopbackCallbackServer } from "../loopback-callback-server";
 import type { SecretStorageCipher } from "../secret-storage-cipher";
 import { type ContentAdapter, ContentAdapterError } from "./content-adapter";
+import {
+  CONTENT_MEDIA_HOST_DEFAULTS,
+  type ContentMediaHost,
+  type ContentMediaHostSettings,
+} from "./content-media-host";
 
 export const CONTENT_APPS_FILE = "openbot-content-apps-v1.json";
+/** The image host settings, encrypted as one value, as the apps file is. */
+export const CONTENT_MEDIA_HOST_FILE = "openbot-content-media-host-v1.json";
 
 /**
  * X and LinkedIn compare the registered callback exactly, so the port is fixed. 28417 is the MCP
@@ -52,6 +64,14 @@ export interface ContentApp {
 
 const appSchema = z.strictObject({ clientId: z.string().min(1), clientSecret: z.string().min(1).nullable() });
 const appsFileSchema = z.object({ version: z.literal(1), apps: z.record(z.string(), z.string()) });
+const mediaHostSchema = z.strictObject({
+  endpoint: z.string().min(1),
+  bucket: z.string().min(1),
+  publicBaseUrl: z.string().min(1),
+  accessKeyId: z.string().min(1),
+  secretAccessKey: z.string().min(1),
+});
+const mediaHostFileSchema = z.object({ version: z.literal(1), host: z.string() });
 
 /** Starts the callback listener of one sign-in. The E2E gives one that binds no port. */
 export type ContentCallbackListen = (receive: (url: URL) => CallbackAnswer) => Promise<{ close: () => Promise<void> }>;
@@ -61,6 +81,10 @@ export interface ContentAccountsOptions {
   cipher: SecretStorageCipher;
   appsPath: string;
   adapters: readonly ContentAdapter[];
+  /** The encrypted image host settings file. */
+  mediaHostPath: string;
+  /** Makes the image host client of saved settings. The E2E gives one on a fake `fetch`. */
+  mediaHost: (settings: ContentMediaHostSettings) => ContentMediaHost;
   openExternal: (url: string) => Promise<void>;
   listen: ContentCallbackListen;
   now: () => Date;
@@ -82,6 +106,10 @@ export class ContentAccounts {
   readonly #listen: ContentCallbackListen;
   readonly #now: () => Date;
   readonly #appWrites = Semaphore.makeUnsafe(1);
+  readonly #mediaHostPath: string;
+  readonly #makeMediaHost: (settings: ContentMediaHostSettings) => ContentMediaHost;
+  /** The saved image host. `loadMediaHost` reads it at startup; a save replaces it. */
+  #mediaHost: { settings: ContentMediaHostSettings; host: ContentMediaHost } | null = null;
   #pending: PendingSignIn | null = null;
   readonly #refreshing = new Map<string, Effect.Effect<string, ContentAdapterError>>();
 
@@ -90,14 +118,90 @@ export class ContentAccounts {
     this.#cipher = options.cipher;
     this.#appsPath = options.appsPath;
     this.#adapters = new Map(options.adapters.map((adapter) => [adapter.platform, adapter]));
+    this.#mediaHostPath = options.mediaHostPath;
+    this.#makeMediaHost = options.mediaHost;
     this.#openExternal = options.openExternal;
     this.#listen = options.listen;
     this.#now = options.now;
   }
 
+  /**
+   * The networks that this version can post to now: each one with an adapter. Instagram takes an image
+   * only from a public URL, so it counts only while an image host is set up.
+   */
   get platforms(): ContentPlatform[] {
-    return [...this.#adapters.keys()];
+    return [...this.#adapters.keys()].filter((platform) => platform !== "instagram" || this.#mediaHost !== null);
   }
+
+  /** The image host, when the user set one up. */
+  mediaHost(): ContentMediaHost | null {
+    return this.#mediaHost?.host ?? null;
+  }
+
+  /** The image host settings for the renderer: never the access key or the secret. */
+  mediaHostView(): ContentMediaHostView {
+    const settings = this.#mediaHost?.settings;
+    return {
+      configured: settings !== undefined,
+      endpoint: settings?.endpoint ?? CONTENT_MEDIA_HOST_DEFAULTS.endpoint,
+      bucket: settings?.bucket ?? CONTENT_MEDIA_HOST_DEFAULTS.bucket,
+      publicBaseUrl: settings?.publicBaseUrl ?? CONTENT_MEDIA_HOST_DEFAULTS.publicBaseUrl,
+      hasKeys: settings !== undefined,
+    };
+  }
+
+  /** Reads the saved image host at startup. A file that cannot be read leaves no host, and Instagram waits. */
+  readonly loadMediaHost = Effect.fn("ContentAccounts.loadMediaHost")(function* (this: ContentAccounts) {
+    const text = yield* Effect.tryPromise(() => readFile(this.#mediaHostPath, "utf8")).pipe(
+      Effect.orElseSucceed(() => null),
+    );
+    if (text === null) return;
+    const settings = yield* Effect.try(() => {
+      const file = mediaHostFileSchema.parse(JSON.parse(text));
+      return mediaHostSchema.parse(JSON.parse(this.#cipher.decrypt(Buffer.from(file.host, "base64"))));
+    }).pipe(Effect.orElseSucceed(() => null));
+    if (!settings) return;
+    registerSecretValue(settings.secretAccessKey);
+    registerSecretValue(settings.accessKeyId);
+    this.#mediaHost = { settings, host: this.#makeMediaHost(settings) };
+  });
+
+  /**
+   * Checks the image host with these values, and saves them only when the check passes. An absent key
+   * field takes the saved one. Nothing is saved on a failure.
+   */
+  readonly saveMediaHost = Effect.fn("ContentAccounts.saveMediaHost")(function* (
+    this: ContentAccounts,
+    input: ContentMediaHostInput,
+  ) {
+    const saved = this.#mediaHost?.settings;
+    const accessKeyId = input.accessKeyId ?? saved?.accessKeyId;
+    const secretAccessKey = input.secretAccessKey ?? saved?.secretAccessKey;
+    if (!accessKeyId || !secretAccessKey)
+      return yield* new ContentAccountError({ message: sourceText("error.content.mediaHostKeysMissing") });
+    registerSecretValue(secretAccessKey);
+    registerSecretValue(accessKeyId);
+    if (!this.#cipher.canPersist())
+      return yield* new ContentAccountError({ message: sourceText("error.app.secretStorageUnavailable") });
+    const settings: ContentMediaHostSettings = {
+      endpoint: input.endpoint,
+      bucket: input.bucket,
+      publicBaseUrl: input.publicBaseUrl,
+      accessKeyId,
+      secretAccessKey,
+    };
+    const host = this.#makeMediaHost(settings);
+    yield* host.probe().pipe(Effect.mapError((error) => new ContentAccountError({ message: error.message })));
+    const encrypted = this.#cipher.encrypt(JSON.stringify(settings)).toString("base64");
+    yield* this.#appWrites.withPermit(
+      writeFileAtomically(this.#mediaHostPath, `${JSON.stringify({ version: 1, host: encrypted })}\n`, {
+        createDirectory: true,
+      }).pipe(
+        Effect.mapError(() => new ContentAccountError({ message: sourceText("error.content.mediaHostSaveFailed") })),
+      ),
+    );
+    this.#mediaHost = { settings, host };
+  });
 
   /** The network of the sign-in that waits for the browser, if any. */
   get connecting(): ContentPlatform | null {

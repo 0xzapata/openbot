@@ -5,18 +5,20 @@ import type { DatabaseSync } from "node:sqlite";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
   CONTENT_APPROVAL_STATES,
+  CONTENT_PENDING_REASONS,
   CONTENT_PLATFORM_KEYS,
   CONTENT_VARIANT_STATUSES,
   type ContentApprovalState,
   type ContentChangedEvent,
   type ContentMedia,
+  type ContentPendingReason,
   type ContentPlatform,
   type ContentPost,
   type ContentVariant,
   decodeContentMediaJson,
   isContentPlatform,
 } from "@openbot/contracts/ipc-content";
-import type { DynamicRecord } from "@openbot/contracts/runtime-values";
+import { type DynamicRecord, isDynamicRecord, isOneOf } from "@openbot/contracts/runtime-values";
 import { sourceText } from "@openbot/i18n/source";
 import {
   checkedColumn,
@@ -570,7 +572,7 @@ export class ContentStore {
         const changed = db
           .prepare(
             `UPDATE content_variants SET status = 'publishing', attempt = attempt + 1, account_id = COALESCE(?, account_id),
-               error_code = NULL, error = NULL, pending_data = NULL, updated_at = ?, last_event_sequence = ?
+               error_code = NULL, error = NULL, pending_data = ${KEEP_HOSTED_KEY}, updated_at = ?, last_event_sequence = ?
              WHERE variant_id = ? AND status = 'queued'`,
           )
           .run(accountId, now.toISOString(), sequence, variantId);
@@ -584,7 +586,10 @@ export class ContentStore {
     }
   }
 
-  /** The network has the post, or refused it. Only a `publishing` variant changes. */
+  /**
+   * The network has the post, or refused it. Only a `publishing` variant changes. A recorded `hostedKey`
+   * stays until main removes its object (`clearHostedKey`).
+   */
   finishVariant(variantId: string, outcome: ContentVariantOutcome, now = new Date()): void {
     const eventType = outcome.kind === "published" ? "content-post.variant-published" : "content-post.variant-failed";
     const payload: Record<string, string> =
@@ -593,37 +598,95 @@ export class ContentStore {
       const time = now.toISOString();
       if (outcome.kind === "published")
         db.prepare(
-          `UPDATE content_variants SET status = 'published', external_post_id = ?, published_at = ?, pending_data = NULL,
+          `UPDATE content_variants SET status = 'published', external_post_id = ?, published_at = ?, pending_data = ${KEEP_HOSTED_KEY},
              error_code = NULL, error = NULL, updated_at = ?, last_event_sequence = ?
            WHERE variant_id = ? AND status = 'publishing'`,
         ).run(outcome.externalPostId, time, time, sequence, variantId);
       else
         db.prepare(
-          `UPDATE content_variants SET status = 'failed', error_code = ?, error = ?, pending_data = NULL, updated_at = ?,
+          `UPDATE content_variants SET status = 'failed', error_code = ?, error = ?, pending_data = ${KEEP_HOSTED_KEY}, updated_at = ?,
              last_event_sequence = ? WHERE variant_id = ? AND status = 'publishing'`,
         ).run(outcome.code, outcome.message, time, sequence, variantId);
     });
   }
 
-  /** The network still works on the post. The variant stays `publishing` until the next check. */
+  /**
+   * The network still works on the post. The variant stays `publishing` until the next check. A recorded
+   * `hostedKey` stays in the new pending data.
+   */
   setPending(variantId: string, pendingData: string, now = new Date()): void {
     this.#variantWrite(variantId, "content-post.variant-pending", {}, (db, sequence) => {
       db.prepare(
-        `UPDATE content_variants SET pending_data = ?, updated_at = ?, last_event_sequence = ?
+        `UPDATE content_variants SET pending_data = CASE WHEN ${HOSTED_KEY} IS NULL THEN ?
+           ELSE json_set(?, '$.hostedKey', ${HOSTED_KEY}) END, updated_at = ?, last_event_sequence = ?
          WHERE variant_id = ? AND status = 'publishing'`,
-      ).run(pendingData, now.toISOString(), sequence, variantId);
+      ).run(pendingData, pendingData, now.toISOString(), sequence, variantId);
     });
   }
 
   /**
-   * At startup, before the publisher can fire. A `publishing` variant with no pending data was cut off
-   * during its request: the network may have the post, so it fails and only the user tries again.
+   * Records the image host key before the upload, in the claimed `publishing` state, so that a crash after
+   * the upload leaves the key for the recovery. The variant has no `checkAt`, so it is not due.
+   */
+  setHostedKey(variantId: string, key: string, now = new Date()): void {
+    this.#variantWrite(variantId, "content-post.variant-hosted", {}, (db, sequence) => {
+      db.prepare(
+        `UPDATE content_variants SET pending_data = json_object('hostedKey', ?), updated_at = ?, last_event_sequence = ?
+         WHERE variant_id = ? AND status = 'publishing'`,
+      ).run(key, now.toISOString(), sequence, variantId);
+    });
+  }
+
+  /** The image host key that a variant recorded, in any status, or null. */
+  hostedKey(variantId: string): string | null {
+    const row = databaseRow(
+      this.#database.connection
+        .prepare(`SELECT ${HOSTED_KEY} AS hosted_key FROM content_variants WHERE variant_id = ?`)
+        .get(variantId),
+    );
+    return row ? optionalStringColumn(row, "hosted_key") : null;
+  }
+
+  /**
+   * The recorded image host keys whose variant is no longer `publishing`, so the network is done with the
+   * object. All variants, or only `variantId`.
+   */
+  hostedKeysToRemove(variantId: string | null = null): Array<{ variantId: string; key: string }> {
+    const rows = databaseRows(
+      this.#database.connection
+        .prepare(
+          `SELECT variant_id, ${HOSTED_KEY} AS hosted_key FROM content_variants
+           WHERE status != 'publishing' AND ${HOSTED_KEY} IS NOT NULL AND (? IS NULL OR variant_id = ?)`,
+        )
+        .all(variantId, variantId),
+    );
+    return rows.map((row) => ({
+      variantId: requiredStringColumn(row, "variant_id"),
+      key: requiredStringColumn(row, "hosted_key"),
+    }));
+  }
+
+  /** Main removed the object of `key`. Only that key of a variant that is not `publishing` is cleared. */
+  clearHostedKey(variantId: string, key: string): void {
+    this.#database.dispatch(`content:hosted-key-cleared:${randomUUID()}`, [], (db) => {
+      db.prepare(
+        `UPDATE content_variants SET pending_data = NULL
+         WHERE variant_id = ? AND status != 'publishing' AND ${HOSTED_KEY} = ?`,
+      ).run(variantId, key);
+    });
+  }
+
+  /**
+   * At startup, before the publisher can fire. A `publishing` variant with no next check was cut off
+   * during its request: the network may have the post, so it fails and only the user tries again. Its
+   * recorded image host key stays, and main removes the object.
    */
   recoverInterrupted(now = new Date()): number {
     const rows = databaseRows(
       this.#database.connection
         .prepare(
-          "SELECT variant_id, platform FROM content_variants WHERE status = 'publishing' AND pending_data IS NULL",
+          `SELECT variant_id, platform FROM content_variants WHERE status = 'publishing'
+             AND (pending_data IS NULL OR json_extract(${VALID_PENDING}, '$.checkAt') IS NULL)`,
         )
         .all(),
     );
@@ -917,6 +980,13 @@ function unskipStatus(
 /** Thrown inside a claim that found no queued row, so its transaction rolls back. */
 class ClaimLost extends Error {}
 
+/** `pending_data` when it is JSON, else NULL: `json_extract` throws on text that is not JSON. */
+const VALID_PENDING = "CASE WHEN json_valid(pending_data) THEN pending_data END";
+/** The object key that a variant uploaded to the image host. */
+const HOSTED_KEY = `json_extract(${VALID_PENDING}, '$.hostedKey')`;
+/** The `pending_data` of a finished variant: only its hosted key, until main removes the object. */
+const KEEP_HOSTED_KEY = `CASE WHEN ${HOSTED_KEY} IS NULL THEN NULL ELSE json_object('hostedKey', ${HOSTED_KEY}) END`;
+
 /** The due time of a variant: the post time while queued, the next check while publishing. */
 const DUE_AT = `CASE v.status WHEN 'queued' THEN p.scheduled_for ELSE json_extract(v.pending_data, '$.checkAt') END`;
 /** The first parameter is the platforms as a JSON array. A pending post is never due. */
@@ -964,6 +1034,18 @@ function decodeVariant(row: DynamicRecord): ContentVariant[] {
       publishedAt: optionalStringColumn(row, "published_at"),
       createdAt: requiredStringColumn(row, "created_at"),
       updatedAt: requiredStringColumn(row, "updated_at"),
+      pendingReason: row.status === "publishing" ? pendingReasonOf(row.pending_data) : null,
     },
   ];
+}
+
+/** The `reason` of the stored `{ checkAt, data, reason }`, or null. */
+function pendingReasonOf(value: unknown): ContentPendingReason | null {
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = JSON.parse(value);
+    return isDynamicRecord(parsed) && isOneOf(CONTENT_PENDING_REASONS, parsed.reason) ? parsed.reason : null;
+  } catch {
+    return null;
+  }
 }

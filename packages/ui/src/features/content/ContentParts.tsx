@@ -37,6 +37,8 @@ export interface ContentNetworkChipProps {
   status: ContentVariantStatus | "pending";
   /** A network already has the post: no network can be skipped or taken back. */
   locked?: boolean;
+  /** A publishing network that accepted the post and still processes it. */
+  processing?: boolean;
   /** The stored error of a failed network: `sourceText` English or provider text. It shows localized. */
   error?: string | null;
   /** Skips the network (`false`) or takes it back (`true`). Only a toggle chip calls it. */
@@ -51,7 +53,11 @@ export function ContentNetworkChip(props: ContentNetworkChipProps) {
   const { t, errorMessage } = useText();
   const chip = () => variantChip(props.status, props.locked);
   const network = () => CONTENT_NETWORK_NAMES[props.platform];
-  const statusLabel = () => t("content.chip.label", { network: network(), status: t(chip().statusKey) });
+  const statusLabel = () =>
+    t("content.chip.label", {
+      network: network(),
+      status: props.processing ? t("content.variant.processing") : t(chip().statusKey),
+    });
   const errorLabel = () =>
     props.error
       ? t("content.chip.error", {

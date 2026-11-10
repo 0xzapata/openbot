@@ -130,11 +130,41 @@ export function parseContentCalendar(value: unknown): ContentCalendarInput {
   return parse(calendar, value, "calendar range");
 }
 
-const beginConnect = z.strictObject({
-  platform,
-  clientId: z.string().trim().min(1).max(INPUT_LIMITS.mcpClientId).optional(),
-  clientSecret: z.string().trim().min(1).max(INPUT_LIMITS.mcpClientSecret).optional(),
+/** An https origin or address with no user, password, query or fragment. */
+const httpsUrl = z
+  .string()
+  .trim()
+  .max(INPUT_LIMITS.identifier)
+  .refine((value) => {
+    try {
+      const url = new URL(value);
+      return url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash;
+    } catch {
+      return false;
+    }
+  })
+  .transform((value) => value.replace(/\/+$/u, ""));
+const mediaHostKey = z.string().trim().min(1).max(INPUT_LIMITS.mcpClientSecret);
+const mediaHost = z.strictObject({
+  endpoint: httpsUrl,
+  // S3 bucket names: 3 to 63 lowercase letters, digits and hyphens, a letter or digit at each end.
+  bucket: z.string().regex(/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/u),
+  publicBaseUrl: httpsUrl,
+  accessKeyId: mediaHostKey.optional(),
+  secretAccessKey: mediaHostKey.optional(),
 });
+
+const beginConnect = z
+  .strictObject({
+    platform,
+    clientId: z.string().trim().min(1).max(INPUT_LIMITS.mcpClientId).optional(),
+    clientSecret: z.string().trim().min(1).max(INPUT_LIMITS.mcpClientSecret).optional(),
+    mediaHost: mediaHost.optional(),
+  })
+  .refine(
+    (input) => input.mediaHost === undefined || input.platform === "instagram",
+    "Only Instagram has an image host.",
+  );
 
 export function parseContentBeginConnect(value: unknown): ContentBeginConnectInput {
   return parse(beginConnect, value, "sign-in");

@@ -183,4 +183,19 @@ export const messages = defineMessages("content", {
   "content.accounts.clientIdHint": "From your app in the {network} developer portal.",
   "content.accounts.clientSecret": "{network} app client secret",
   "content.accounts.clientSecretHint": "OpenBot keeps it on this computer and does not show it again.",
+  // TODO(loupe): a network accepted the post and still processes it (YouTube video, Instagram or Threads container)
+  "content.variant.processing": "Processing",
+  "content.accounts.mediaHost.title": "Image host",
+  "content.accounts.mediaHost.description":
+    "Instagram takes an image only from a public address. OpenBot puts the image of each Instagram or Threads post in your Cloudflare R2 bucket while it posts, and removes it after.",
+  "content.accounts.mediaHost.configured": "Image host set up",
+  "content.accounts.mediaHost.endpoint": "R2 endpoint",
+  "content.accounts.mediaHost.bucket": "Bucket",
+  "content.accounts.mediaHost.publicBaseUrl": "Public base URL",
+  "content.accounts.mediaHost.publicBaseUrlHint":
+    "The public address of the bucket: its R2 Public Development URL or a custom domain.",
+  "content.accounts.mediaHost.accessKeyId": "Access key ID",
+  "content.accounts.mediaHost.secretAccessKey": "Secret access key",
+  "content.accounts.mediaHost.keysHint":
+    "An R2 API token with write access to this bucket. OpenBot keeps it on this computer and does not show it again. Leave both empty to keep the saved ones.",
 });

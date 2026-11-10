@@ -11,7 +11,7 @@
 
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -46,6 +46,8 @@ const { CONTENT_REDIRECT_URI, ContentAccounts } = await import("../src/main/cont
 const { ContentPublisher } = await import("../src/main/content/content-publisher");
 const { ContentService } = await import("../src/main/content/content-service");
 const { LinkedInAdapter } = await import("../src/main/content/linkedin-adapter");
+const { InstagramAdapter } = await import("../src/main/content/meta-adapters");
+const { R2MediaHost } = await import("../src/main/content/content-media-host");
 const { XAdapter } = await import("../src/main/content/x-adapter");
 const { contentIpcHandlers } = await import("../src/main/ipc/content-handlers");
 const { registerIpcGroup } = await import("../src/main/ipc/define-ipc-group");
@@ -95,6 +97,10 @@ const SECRETS = {
   xAccess: "x-access-token-0123456789",
   xRefresh: "x-refresh-token-0123456789",
   liClientSecret: "li-client-secret-0123456789",
+  igClientSecret: "ig-client-secret-0123456789",
+  igToken: "ig-long-lived-token-0123456789",
+  r2AccessKey: "test-access-key-0123456789",
+  r2Secret: "test-secret-access-key-0123456789",
 };
 
 function json(status: number, body: unknown): Response {
@@ -124,6 +130,38 @@ const fakeFetch: ContentFetch = async (url, init) => {
       return json(201, { data: { id: String(tweetId) } });
   }
   return json(404, { message: `No route ${route}.` });
+};
+
+// The fake R2 bucket and its public route. Only these two fake hosts answer for the image host.
+const R2 = "r2.fake.example.test";
+const R2_PUBLIC = "pub.fake.example.test";
+const bucket = new Map<string, Buffer>();
+const r2Requests: Array<{ method: string; host: string; key: string }> = [];
+const ipcFetch: ContentFetch = async (url, init) => {
+  const parsed = new URL(url);
+  const method = init.method ?? "GET";
+  if (parsed.host === R2) {
+    const key = parsed.pathname.replace(/^\/[^/]+\//u, "");
+    r2Requests.push({ method, host: parsed.host, key });
+    if (method === "PUT" && init.body instanceof Uint8Array) bucket.set(key, Buffer.from(init.body));
+    if (method === "DELETE") bucket.delete(key);
+    return new Response(null, { status: method === "DELETE" ? 204 : 200 });
+  }
+  if (parsed.host === R2_PUBLIC) {
+    const key = parsed.pathname.slice(1);
+    r2Requests.push({ method, host: parsed.host, key });
+    const object = bucket.get(key);
+    return object ? new Response(new Uint8Array(object), { status: 200 }) : new Response(null, { status: 404 });
+  }
+  switch (`${method} ${parsed.host}${parsed.pathname}`) {
+    case "POST api.instagram.com/oauth/access_token":
+      return json(200, { access_token: "ig-short-token-0123456789", user_id: "ig-1" });
+    case "GET graph.instagram.com/access_token":
+      return json(200, { access_token: SECRETS.igToken, expires_in: 5_184_000 });
+    case "GET graph.instagram.com/v24.0/me":
+      return json(200, { user_id: "ig-1", username: "openbot_ig" });
+  }
+  return fakeFetch(url, init);
 };
 
 const cipher = {
@@ -163,7 +201,7 @@ try {
     (event) => events.push(event),
     () => accounts.platforms,
   );
-  const adapterOptions = { fetch: fakeFetch, now, sleep: async () => {} };
+  const adapterOptions = { fetch: ipcFetch, now, sleep: async () => {} };
   let receive: ((url: URL) => CallbackAnswer) | null = null;
   let browser: (page: URL) => void = () => {};
   const callbackAnswers: CallbackAnswer[] = [];
@@ -171,7 +209,9 @@ try {
     store,
     cipher,
     appsPath: join(state, "openbot-content-apps-v1.json"),
-    adapters: [new XAdapter(adapterOptions), new LinkedInAdapter(adapterOptions)],
+    adapters: [new XAdapter(adapterOptions), new LinkedInAdapter(adapterOptions), new InstagramAdapter(adapterOptions)],
+    mediaHostPath: join(state, "openbot-content-media-host-v1.json"),
+    mediaHost: (settings) => new R2MediaHost({ fetch: ipcFetch, now, settings }),
     openExternal: async (url) => {
       const page = new URL(url);
       setImmediate(() => browser(page));
@@ -271,8 +311,16 @@ try {
     );
     assert.deepEqual(
       initial.networks.filter((network) => network.available).map((network) => network.platform),
-      ["x", "linkedin"],
+      ["x", "linkedin", "instagram"],
     );
+    assert.equal(initial.networks.find((network) => network.platform === "instagram")?.app.needsSecret, true);
+    assert.deepEqual(initial.mediaHost, {
+      configured: false,
+      endpoint: "https://40392de49b2bbcedca37e4a962440d2d.r2.cloudflarestorage.com",
+      bucket: "dev-assets-bucket",
+      publicBaseUrl: "https://pub-451ea606e71242028630e5aadc8cd8aa.r2.dev",
+      hasKeys: false,
+    });
     assert.equal(initial.networks.find((network) => network.platform === "linkedin")?.app.needsSecret, true);
     assert.equal(initial.connecting, null);
 
@@ -328,6 +376,88 @@ try {
     assert.deepEqual(callbackAnswers.at(-1), { status: 200, message: "error.content.redirectSignedIn" });
     return { connected: x?.account?.handle, cancelled: cancelled.message };
   });
+
+  await step(
+    "1b. Image host: probe failure saves nothing; a probe pass saves it and signs in; new values replace it",
+    async () => {
+      const host = {
+        endpoint: `https://${R2}`,
+        bucket: "content-bucket",
+        publicBaseUrl: `https://${R2_PUBLIC}/not-public`,
+        accessKeyId: SECRETS.r2AccessKey,
+        secretAccessKey: SECRETS.r2Secret,
+      };
+      const app = { platform: "instagram", clientId: "ig-client-id", clientSecret: SECRETS.igClientSecret };
+      await refused(
+        endpoints.beginConnect.channel,
+        { platform: "instagram", clientId: "ig-client-id", clientSecret: SECRETS.igClientSecret },
+        "error.content.instagramNeedsHost",
+      );
+      await refused(endpoints.beginConnect.channel, { ...app, mediaHost: host }, "error.content.mediaHostNotPublic");
+      const afterFailure = await call.accounts(endpoints.listAccounts.channel);
+      assert.equal(afterFailure.mediaHost?.configured, false, "A failed probe saves nothing.");
+      assert.equal(afterFailure.networks.find((network) => network.platform === "instagram")?.app.configured, false);
+      await assert.rejects(stat(join(state, "openbot-content-media-host-v1.json")));
+      assert.equal(bucket.size, 0, "The probe file is removed on a failure too.");
+      for (const bad of [
+        { platform: "x", mediaHost: { ...host, publicBaseUrl: `https://${R2_PUBLIC}` } },
+        { ...app, mediaHost: { ...host, endpoint: `http://${R2}` } },
+        { ...app, mediaHost: { ...host, publicBaseUrl: `https://user:pass@${R2_PUBLIC}` } },
+        { ...app, mediaHost: { ...host, bucket: "Bad_Bucket" } },
+        { ...app, mediaHost: { ...host, extra: true } },
+      ])
+        await assert.rejects(invoke(endpoints.beginConnect.channel, bad, decodeVoid), /Invalid content sign-in/);
+
+      browser = (page) => {
+        assert.ok(receive);
+        receive(
+          new URL(
+            `${CONTENT_REDIRECT_URI}?${new URLSearchParams({ state: page.searchParams.get("state") ?? "", code: "ig-code-0123456789" })}`,
+          ),
+        );
+      };
+      r2Requests.length = 0;
+      const connected = await call.accounts(endpoints.beginConnect.channel, {
+        ...app,
+        mediaHost: { ...host, publicBaseUrl: `https://${R2_PUBLIC}` },
+      });
+      assertClean(connected);
+      assert.deepEqual(
+        r2Requests.map((request) => request.method),
+        ["PUT", "GET", "DELETE"],
+      );
+      assert.deepEqual(connected.mediaHost, {
+        configured: true,
+        endpoint: `https://${R2}`,
+        bucket: "content-bucket",
+        publicBaseUrl: `https://${R2_PUBLIC}`,
+        hasKeys: true,
+      });
+      assert.equal(
+        connected.networks.find((network) => network.platform === "instagram")?.account?.handle,
+        "openbot_ig",
+      );
+      assert.ok(accounts.platforms.includes("instagram"));
+
+      // New values with no keys keep the saved keys, run the probe again, and need no new sign-in.
+      r2Requests.length = 0;
+      const replaced = await call.accounts(endpoints.beginConnect.channel, {
+        platform: "instagram",
+        mediaHost: { endpoint: `https://${R2}`, bucket: "other-bucket", publicBaseUrl: `https://${R2_PUBLIC}/` },
+      });
+      assertClean(replaced);
+      assert.equal(replaced.mediaHost?.bucket, "other-bucket");
+      assert.equal(replaced.mediaHost?.publicBaseUrl, `https://${R2_PUBLIC}`, "The trailing slash goes.");
+      assert.equal(replaced.mediaHost?.hasKeys, true);
+      assert.deepEqual(
+        r2Requests.map((request) => request.method),
+        ["PUT", "GET", "DELETE"],
+      );
+      const file = await readFile(join(state, "openbot-content-media-host-v1.json"), "utf8");
+      for (const secret of [SECRETS.r2AccessKey, SECRETS.r2Secret, R2]) assert.ok(!file.includes(secret));
+      return { mediaHost: replaced.mediaHost };
+    },
+  );
 
   const createdIds: string[] = [];
   let mediaPostId = "";
@@ -405,7 +535,7 @@ try {
     assert.equal(unscheduled.scheduledFor, null, "The time is removed.");
     assert.equal(statusOf(unscheduled, "x"), "draft");
     assert.equal(statusOf(unscheduled, "linkedin"), "draft");
-    assert.equal(statusOf(unscheduled, "instagram"), "skipped", "A network with no adapter was skipped at once.");
+    assert.equal(statusOf(unscheduled, "threads"), "skipped", "A network with no adapter was skipped at once.");
     await call.post(endpoints.updatePost.channel, {
       postId: queued.id,
       action: "edit",
@@ -464,7 +594,10 @@ try {
       assert.equal(approved.status, "queued");
       assert.equal(statusOf(approved, "x"), "queued");
       assert.equal(statusOf(approved, "linkedin"), "queued");
-      for (const platform of ["instagram", "threads", "facebook_page", "youtube"])
+      // Instagram has an adapter and an image host here, but its own variant has no image: the publish
+      // refuses it at its time, not the approve.
+      assert.equal(statusOf(approved, "instagram"), "queued");
+      for (const platform of ["threads", "facebook_page", "youtube"])
         assert.equal(statusOf(approved, platform), "skipped", `${platform} has no adapter, so approve skips it.`);
       await refused(
         endpoints.updatePost.channel,
@@ -480,7 +613,8 @@ try {
       assert.equal(undone.scheduledFor, future, "The time stays as the proposal.");
       assert.equal(statusOf(undone, "x"), "draft");
       assert.equal(statusOf(undone, "linkedin"), "draft");
-      assert.equal(statusOf(undone, "instagram"), "skipped");
+      assert.equal(statusOf(undone, "instagram"), "draft");
+      assert.equal(statusOf(undone, "threads"), "skipped");
       await refused(
         endpoints.updatePost.channel,
         { postId: pending.id, action: "unapprove" },

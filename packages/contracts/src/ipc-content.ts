@@ -16,6 +16,8 @@ export interface ContentPlatformRules {
   mediaRequired: boolean;
   /** Only YouTube has a title. */
   titleLimit?: number;
+  /** A limit of the text in UTF-8 bytes, next to `textLimit`. Only YouTube has one. */
+  textBytesLimit?: number;
 }
 
 export const CONTENT_PLATFORMS: { readonly [platform in ContentPlatform]: ContentPlatformRules } = {
@@ -24,7 +26,13 @@ export const CONTENT_PLATFORMS: { readonly [platform in ContentPlatform]: Conten
   instagram: { textLimit: 2200, media: "image", mediaRequired: true },
   threads: { textLimit: 500, media: "image", mediaRequired: false },
   facebook_page: { textLimit: 63206, media: "image", mediaRequired: false },
-  youtube: { textLimit: 5000, media: "video", mediaRequired: true, titleLimit: INPUT_LIMITS.contentVariantTitle },
+  youtube: {
+    textLimit: 5000,
+    media: "video",
+    mediaRequired: true,
+    titleLimit: INPUT_LIMITS.contentVariantTitle,
+    textBytesLimit: 5000,
+  },
 };
 
 export const CONTENT_APPROVAL_STATES = ["none", "pending", "approved"] as const;
@@ -45,6 +53,10 @@ export interface ContentMedia {
   file: string;
 }
 
+/** Why a `publishing` variant waits: the network accepted the post and still processes it. */
+export const CONTENT_PENDING_REASONS = ["processing"] as const;
+export type ContentPendingReason = (typeof CONTENT_PENDING_REASONS)[number];
+
 /** One network of a post. A null body or media means that the variant uses the post's own. */
 export interface ContentVariant {
   id: string;
@@ -61,6 +73,8 @@ export interface ContentVariant {
   publishedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Set only on a `publishing` variant that waits for the network. Absent in older views. */
+  pendingReason?: ContentPendingReason | null;
 }
 
 export interface ContentPost {
@@ -83,7 +97,8 @@ export type ContentVariantIssue =
   | "needs-video"
   | "needs-title"
   | "images-only"
-  | "video-only";
+  | "video-only"
+  | "angle-brackets";
 
 export function isContentPlatform(value: unknown): value is ContentPlatform {
   return isOneOf(CONTENT_PLATFORM_KEYS, value);
@@ -163,11 +178,16 @@ export function contentVariantIssues(input: {
   const issues: ContentVariantIssue[] = [];
   const titleTooLong =
     rules.titleLimit !== undefined && input.title !== null && Array.from(input.title).length > rules.titleLimit;
-  if (contentTextLength(input.platform, input.body) > rules.textLimit || titleTooLong) issues.push("over-limit");
+  const bodyTooLong =
+    contentTextLength(input.platform, input.body) > rules.textLimit ||
+    (rules.textBytesLimit !== undefined && new TextEncoder().encode(input.body).length > rules.textBytesLimit);
+  if (bodyTooLong || titleTooLong) issues.push("over-limit");
   if (input.media === null && rules.mediaRequired) issues.push(rules.media === "image" ? "needs-image" : "needs-video");
   if (input.media !== null && input.media.kind !== rules.media)
     issues.push(rules.media === "image" ? "images-only" : "video-only");
   if (rules.titleLimit !== undefined && !input.title?.trim()) issues.push("needs-title");
+  // YouTube refuses `<` and `>` in the title and the description.
+  if (input.platform === "youtube" && /[<>]/u.test(`${input.title ?? ""}${input.body}`)) issues.push("angle-brackets");
   return issues;
 }
 
@@ -234,16 +254,25 @@ export interface ContentAppView {
   configured: boolean;
   clientId: string | null;
   hasSecret: boolean;
-  /** LinkedIn needs a client secret; X does not. */
+  /** LinkedIn and the Meta networks need a client secret; X and YouTube do not. */
   needsSecret: boolean;
 }
 
 export interface ContentNetworkView {
   platform: ContentPlatform;
-  /** v1 can post only to X and LinkedIn. */
+  /** The network has an adapter in this version. */
   available: boolean;
   app: ContentAppView;
   account: ContentAccountView | null;
+}
+
+/** The image host that Instagram and Threads fetch images from. Never the access key or the secret. */
+export interface ContentMediaHostView {
+  configured: boolean;
+  endpoint: string;
+  bucket: string;
+  publicBaseUrl: string;
+  hasKeys: boolean;
 }
 
 export interface ContentAccountsState {
@@ -251,6 +280,8 @@ export interface ContentAccountsState {
   networks: ContentNetworkView[];
   connecting: ContentPlatform | null;
   secretStorage: boolean;
+  /** Absent in older views. */
+  mediaHost?: ContentMediaHostView | null;
 }
 
 export interface ContentCalendar {
@@ -325,11 +356,22 @@ export interface ContentCalendarInput {
   to: string;
 }
 
+/** The image host values. An absent key field keeps the saved one. */
+export interface ContentMediaHostInput {
+  endpoint: string;
+  bucket: string;
+  publicBaseUrl: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+}
+
 /** Saves the app when a client id is given, then signs in. */
 export interface ContentBeginConnectInput {
   platform: ContentPlatform;
   clientId?: string;
   clientSecret?: string;
+  /** Only for Instagram: main checks the host, saves it, then signs in. */
+  mediaHost?: ContentMediaHostInput;
 }
 
 export interface ContentDisconnectInput {
@@ -390,7 +432,10 @@ const VARIANT_KEYS = [
 
 export function isContentVariantView(value: unknown): value is ContentVariantView {
   return (
-    hasKeys(value, VARIANT_KEYS) &&
+    hasKeys(value, VARIANT_KEYS, ["pendingReason"]) &&
+    (value.pendingReason === undefined ||
+      value.pendingReason === null ||
+      isOneOf(CONTENT_PENDING_REASONS, value.pendingReason)) &&
     isString(value.id) &&
     isContentPlatform(value.platform) &&
     isNullableString(value.accountId) &&
@@ -477,9 +522,21 @@ export function isContentNetworkView(value: unknown): value is ContentNetworkVie
   );
 }
 
+export function isContentMediaHostView(value: unknown): value is ContentMediaHostView {
+  return (
+    hasKeys(value, ["configured", "endpoint", "bucket", "publicBaseUrl", "hasKeys"]) &&
+    isBoolean(value.configured) &&
+    isString(value.endpoint) &&
+    isString(value.bucket) &&
+    isString(value.publicBaseUrl) &&
+    isBoolean(value.hasKeys)
+  );
+}
+
 export function isContentAccountsState(value: unknown): value is ContentAccountsState {
   return (
-    hasKeys(value, ["networks", "connecting", "secretStorage"]) &&
+    hasKeys(value, ["networks", "connecting", "secretStorage"], ["mediaHost"]) &&
+    (value.mediaHost === undefined || value.mediaHost === null || isContentMediaHostView(value.mediaHost)) &&
     Array.isArray(value.networks) &&
     value.networks.every(isContentNetworkView) &&
     (value.connecting === null || isContentPlatform(value.connecting)) &&

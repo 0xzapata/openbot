@@ -140,6 +140,39 @@ describe("content payloads from the renderer", () => {
     expect(() => parseContentBeginConnect({ platform: "x", redirectUri: "https://evil.example" })).toThrow();
   });
 
+  it("parses an Instagram image host and refuses unsafe URLs, bad buckets and other networks", () => {
+    const mediaHost = {
+      endpoint: "https://account.r2.example.test",
+      bucket: "content-bucket",
+      publicBaseUrl: "https://pub.example.test/",
+      accessKeyId: "access",
+      secretAccessKey: "secret",
+    };
+    expect(parseContentBeginConnect({ platform: "instagram", mediaHost })).toEqual({
+      platform: "instagram",
+      mediaHost: { ...mediaHost, publicBaseUrl: "https://pub.example.test" },
+    });
+    const { accessKeyId: _id, secretAccessKey: _secret, ...noKeys } = mediaHost;
+    expect(parseContentBeginConnect({ platform: "instagram", mediaHost: noKeys }).mediaHost).not.toHaveProperty(
+      "accessKeyId",
+    );
+    for (const bad of [
+      { endpoint: "http://account.r2.example.test" },
+      { endpoint: "https://user:pass@account.r2.example.test" },
+      { publicBaseUrl: "https://pub.example.test/?token=1" },
+      { publicBaseUrl: "https://pub.example.test/#x" },
+      { publicBaseUrl: "javascript:alert(1)" },
+      { bucket: "Content_Bucket" },
+      { bucket: "ab" },
+      { bucket: "-bucket" },
+      { accessKeyId: "" },
+      { secretAccessKey: "x".repeat(INPUT_LIMITS.mcpClientSecret + 1) },
+      { region: "auto" },
+    ])
+      expect(() => parseContentBeginConnect({ platform: "instagram", mediaHost: { ...mediaHost, ...bad } })).toThrow();
+    expect(() => parseContentBeginConnect({ platform: "threads", mediaHost })).toThrow();
+  });
+
   it("parses a disconnect or a cancel, never both", () => {
     expect(parseContentDisconnect({ accountId: "a1" })).toEqual({ accountId: "a1" });
     expect(parseContentDisconnect({ platform: "x", cancel: true })).toEqual({ platform: "x", cancel: true });

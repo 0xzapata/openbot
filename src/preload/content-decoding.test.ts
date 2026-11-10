@@ -85,6 +85,61 @@ describe("content decoders", () => {
     expect(() => decodeContentAccountsState({ ...ACCOUNTS, networks })).toThrow();
   });
 
+  it("keeps the step 4 fields and accepts their absence", () => {
+    const processing = { ...POST, variants: [{ ...VARIANT, status: "publishing", pendingReason: "processing" }] };
+    expect(decodeContentPost(processing)).toEqual(processing);
+    const none = { ...POST, variants: [{ ...VARIANT, pendingReason: null }] };
+    expect(decodeContentPost(none)).toEqual(none);
+    const mediaHost = {
+      configured: true,
+      endpoint: "https://account.r2.example.test",
+      bucket: "content-bucket",
+      publicBaseUrl: "https://pub.example.test",
+      hasKeys: true,
+    };
+    expect(decodeContentAccountsState({ ...ACCOUNTS, mediaHost })).toEqual({ ...ACCOUNTS, mediaHost });
+    expect(decodeContentAccountsState({ ...ACCOUNTS, mediaHost: null })).toEqual({ ...ACCOUNTS, mediaHost: null });
+  });
+
+  it.each([
+    [
+      "an unknown pending reason",
+      () => decodeContentPost({ ...POST, variants: [{ ...VARIANT, pendingReason: "queued" }] }),
+    ],
+    [
+      "an image host access key",
+      () =>
+        decodeContentAccountsState({
+          ...ACCOUNTS,
+          mediaHost: {
+            configured: true,
+            endpoint: "https://a",
+            bucket: "b",
+            publicBaseUrl: "https://p",
+            hasKeys: true,
+            accessKeyId: "k",
+          },
+        }),
+    ],
+    [
+      "an image host secret",
+      () =>
+        decodeContentAccountsState({
+          ...ACCOUNTS,
+          mediaHost: {
+            configured: true,
+            endpoint: "https://a",
+            bucket: "b",
+            publicBaseUrl: "https://p",
+            hasKeys: true,
+            secretAccessKey: "s",
+          },
+        }),
+    ],
+  ])("refuses %s", (_name, decode) => {
+    expect(decode).toThrow();
+  });
+
   it("refuses an app with a client secret", () => {
     const networks = ACCOUNTS.networks.map((item) => ({ ...item, app: { ...item.app, clientSecret: "secret" } }));
     expect(() => decodeContentAccountsState({ ...ACCOUNTS, networks })).toThrow();

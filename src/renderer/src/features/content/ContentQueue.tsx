@@ -627,6 +627,7 @@ function ContentQueueRow(props: ContentQueueRowProps) {
                     platform={variant().platform}
                     status={pending() && variant().status === "draft" ? "pending" : variant().status}
                     locked={locked()}
+                    processing={variant().pendingReason === "processing"}
                     error={variant().error}
                     onToggle={(included) => props.onToggle(variant(), included)}
                   />

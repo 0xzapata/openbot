@@ -30,7 +30,13 @@ import {
 } from "../../backend/content/content-store";
 import type { RoutineDueSource } from "../../backend/routine-timer";
 import { CONTENT_REFRESH_MARGIN_MS, type ContentAccounts, signInAgain } from "./content-accounts";
-import { ContentAdapterError, type ContentPublishMedia, type ContentPublishResult } from "./content-adapter";
+import {
+  ContentAdapterError,
+  type ContentHostImage,
+  type ContentPublishMedia,
+  type ContentPublishResult,
+} from "./content-adapter";
+import { contentHostedKey } from "./content-media-host";
 
 const logger = createOpenBotLogger("content-publisher");
 
@@ -43,6 +49,7 @@ const ISSUE_TEXT = {
   "needs-title": () => sourceText("error.content.issueNeedsTitle"),
   "images-only": () => sourceText("error.content.issueImagesOnly"),
   "video-only": () => sourceText("error.content.issueVideoOnly"),
+  "angle-brackets": () => sourceText("error.content.issueAngleBrackets"),
 } as const satisfies Record<ContentVariantIssue, () => string>;
 
 export interface ContentPublisherOptions {
@@ -77,6 +84,7 @@ export class ContentPublisher implements RoutineDueSource {
     });
     for (const item of due) {
       if (!active()) break;
+      // The release runs on every exit, after the variant has its outcome.
       yield* this.#process(item).pipe(
         Effect.catchCause((cause) =>
           Effect.sync(() => {
@@ -100,9 +108,45 @@ export class ContentPublisher implements RoutineDueSource {
             }
           }),
         ),
+        Effect.ensuring(this.releaseHostedMedia(item.variant.id)),
       );
     }
   });
+
+  /**
+   * Removes the image host object of each variant that the network is done with: published, failed, or
+   * any status but `publishing`. A failed removal does not change the post: the key stays recorded and the
+   * next startup tries again. All variants at startup, or one after its publish step.
+   */
+  releaseHostedMedia(variantId: string | null = null): Effect.Effect<void> {
+    return Effect.gen({ self: this }, function* () {
+      const keys = yield* Effect.try(() => this.#store.hostedKeysToRemove(variantId)).pipe(
+        Effect.orElseSucceed(() => []),
+      );
+      for (const { variantId: id, key } of keys) {
+        const host = this.#accounts.mediaHost();
+        // The object name is not a secret: it is random and names nothing of the user. The log field is
+        // `object`, because the logger hides a field named `key`.
+        const removed = host
+          ? yield* host.remove(key).pipe(
+              Effect.as(true),
+              Effect.catch((error) =>
+                Effect.sync(() => {
+                  logger.warn("An image host object could not be removed.", {
+                    variantId: id,
+                    object: key,
+                    cause: error.message,
+                  });
+                  return false;
+                }),
+              ),
+            )
+          : false;
+        if (!host) logger.warn("An image host object waits for a host to be set up.", { variantId: id, object: key });
+        if (removed) yield* Effect.try(() => this.#store.clearHostedKey(id, key)).pipe(Effect.ignore);
+      }
+    });
+  }
 
   readonly #process = Effect.fn("ContentPublisher.process")(function* (
     this: ContentPublisher,
@@ -124,7 +168,16 @@ export class ContentPublisher implements RoutineDueSource {
       return this.#write(variant.id, result);
     }
 
+    // A key that an earlier attempt left (its removal failed): try once more before a new upload.
+    yield* this.releaseHostedMedia(variant.id);
     if (!this.#store.claimVariant(variant.id, account?.id ?? null, this.#now())) return;
+    // The removal failed again: no second object is made while the first one stays.
+    if (this.#store.hostedKey(variant.id))
+      return this.#finish(variant.id, {
+        kind: "failed",
+        code: "server",
+        message: sourceText("error.content.mediaHostCleanup"),
+      });
 
     const body = variant.body ?? item.postBody;
     const media = variant.media ?? item.postMedia;
@@ -145,6 +198,7 @@ export class ContentPublisher implements RoutineDueSource {
       });
     // Decision B: a network with no connected account fails when its time comes.
     if (!account) return this.#finish(variant.id, signedOut(platform));
+    const hostImage = this.#hostImage(variant.id, platform);
     const result = yield* this.#withToken(account, (accessToken) =>
       adapter.publish({
         accessToken,
@@ -152,10 +206,37 @@ export class ContentPublisher implements RoutineDueSource {
         body,
         title: variant.title,
         media: file,
+        ...(hostImage ? { hostImage } : {}),
       }),
     );
     this.#write(variant.id, result);
   });
+
+  /**
+   * The upload of this one variant's image, for Instagram and Threads with an image host. The key is
+   * recorded on the claimed variant before the upload, so a crash after the upload leaves it for the
+   * recovery. This is the only call of `put`.
+   */
+  #hostImage(variantId: string, platform: ContentPlatform): ContentHostImage | null {
+    const host = this.#accounts.mediaHost();
+    if (!host || (platform !== "instagram" && platform !== "threads")) return null;
+    // One upload per publish: a second call after a token refresh gets the same URL.
+    let uploaded: { url: string } | null = null;
+    return (media) =>
+      Effect.gen({ self: this }, function* () {
+        if (uploaded) return uploaded;
+        const key = contentHostedKey(media.mimeType);
+        if (!key)
+          return yield* new ContentAdapterError({
+            code: "invalid",
+            status: null,
+            message: sourceText("error.content.mediaType"),
+          });
+        this.#store.setHostedKey(variantId, key, this.#now());
+        uploaded = yield* host.put({ bytes: media.bytes, mimeType: media.mimeType }, key);
+        return uploaded;
+      });
+  }
 
   /**
    * Runs `request` with a token that is not about to end. A 401 refreshes once and sends once more: a
@@ -172,9 +253,9 @@ export class ContentPublisher implements RoutineDueSource {
         }),
       ),
     );
+    const margin = this.#accounts.adapter(account.platform)?.refreshMarginMs ?? CONTENT_REFRESH_MARGIN_MS;
     const endsSoon =
-      account.expiresAt !== null &&
-      new Date(account.expiresAt).getTime() - this.#now().getTime() < CONTENT_REFRESH_MARGIN_MS;
+      account.expiresAt !== null && new Date(account.expiresAt).getTime() - this.#now().getTime() < margin;
     const first = endsSoon
       ? refresh.pipe(Effect.flatMap(request))
       : Effect.try({
@@ -201,7 +282,11 @@ export class ContentPublisher implements RoutineDueSource {
       return;
     }
     const checkAt = new Date(this.#now().getTime() + result.checkAfterMs).toISOString();
-    this.#store.setPending(variantId, JSON.stringify({ checkAt, data: result.pendingData }), this.#now());
+    this.#store.setPending(
+      variantId,
+      JSON.stringify({ checkAt, data: result.pendingData, ...(result.reason ? { reason: result.reason } : {}) }),
+      this.#now(),
+    );
   }
 
   #finish(variantId: string, outcome: ContentVariantOutcome): void {

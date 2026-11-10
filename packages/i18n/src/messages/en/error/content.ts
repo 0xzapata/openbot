@@ -82,4 +82,30 @@ export const messages = defineMessages("error.content", {
   "error.content.serverError": "{network} had a server error ({status}).",
   "error.content.refusedPost": "{network} refused the post: {reason}",
   "error.content.refusedPermission": "{network} refused the request. The app may not have the permission: {reason}",
+  // Step 4: Instagram, Threads, Facebook Pages, YouTube and the image host.
+  "error.content.issueAngleBrackets": "YouTube does not take < or > in the title or the description.",
+  "error.content.instagramJpegOnly": "Instagram takes only JPEG images up to 8 MB. Use another image for Instagram.",
+  "error.content.processingTimeout": "{network} did not finish the post in 24 hours. Check {network} before you retry.",
+  "error.content.uploadIncomplete": "The upload to {network} did not finish. Try again.",
+  "error.content.mediaHostUploadRefused":
+    "The image host refused the upload ({status}). Check the access key, the secret, the endpoint and the bucket.",
+  "error.content.mediaHostNotPublic":
+    "The image host did not show the file at the public base URL ({status}). Turn on public access for the bucket (the R2 Public Development URL, or a custom domain on the bucket), and give that URL as the public base URL.",
+  "error.content.mediaHostBytesDiffer":
+    "The public base URL sent back a different file. Give the public URL of this bucket.",
+  "error.content.mediaHostUnreachable": "OpenBot could not reach the image host.",
+  "error.content.mediaHostRefused": "The image host refused the request ({status}).",
+  "error.content.mediaHostKey": "OpenBot uses only its own file names on the image host.",
+  "error.content.mediaHostKeysMissing": "Give the access key ID and the secret access key of the image host.",
+  "error.content.mediaHostSaveFailed": "OpenBot could not save the image host.",
+  "error.content.mediaHostCleanup":
+    "OpenBot could not remove the image of the last attempt from the image host. Try again later.",
+  // TODO(loupe): Instagram unavailable because no image host is set up
+  "error.content.instagramNeedsHost": "Instagram needs an image host.",
+  // TODO(loupe): Threads post with an image while no image host is set up
+  "error.content.threadsNeedsHost": "Threads needs an image host for a post with an image.",
+  // TODO(loupe): Facebook sign-in with zero Pages
+  "error.content.facebookNoPage": "No Facebook Page.",
+  // TODO(loupe): Facebook sign-in with more than one Page
+  "error.content.facebookManyPages": "More than one Facebook Page.",
 });

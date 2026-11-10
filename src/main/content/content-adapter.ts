@@ -8,7 +8,7 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
-import type { ContentMediaKind, ContentPlatform } from "@openbot/contracts/ipc-content";
+import type { ContentMediaKind, ContentPendingReason, ContentPlatform } from "@openbot/contracts/ipc-content";
 import { isDynamicRecord } from "@openbot/contracts/runtime-values";
 import { sourceText } from "@openbot/i18n/source";
 import { redactText } from "@openbot/logging";
@@ -35,8 +35,11 @@ export interface ContentProfile {
 
 export type ContentPublishResult =
   | { kind: "published"; externalPostId: string; url: string | null }
-  /** The network still works on the post. `checkPostStatus` asks again after `checkAfterMs`. */
-  | { kind: "pending"; pendingData: string; checkAfterMs: number };
+  /**
+   * The network still works on the post. `checkPostStatus` asks again after `checkAfterMs`. `reason`
+   * `processing`: the network accepted the post, and it is not live yet.
+   */
+  | { kind: "pending"; pendingData: string; checkAfterMs: number; reason?: ContentPendingReason };
 
 export interface ContentPublishMedia {
   kind: ContentMediaKind;
@@ -53,6 +56,8 @@ export const CONTENT_ADAPTER_ERROR_CODES = [
   "server",
   "unknown-result",
   "not-supported",
+  // The post or its file does not fit the network. Nothing was sent.
+  "invalid",
 ] as const;
 
 export class ContentAdapterError extends Schema.TaggedError<ContentAdapterError>()("ContentAdapterError", {
@@ -61,8 +66,13 @@ export class ContentAdapterError extends Schema.TaggedError<ContentAdapterError>
   message: Schema.String,
 }) {}
 
+/** Puts the image of one publish on the image host, and gives its public URL. */
+export type ContentHostImage = (media: ContentPublishMedia) => Effect.Effect<{ url: string }, ContentAdapterError>;
+
 export interface ContentAdapter {
   readonly platform: ContentPlatform;
+  /** A token that ends in less than this is refreshed before a publish. Default `CONTENT_REFRESH_MARGIN_MS`. */
+  readonly refreshMarginMs?: number;
   /** Makes the `state` and the PKCE S256 verifier and challenge. */
   generateAuthUrl(input: { clientId: string; redirectUri: string }): ContentOAuthStart;
   authenticate(input: {
@@ -83,6 +93,8 @@ export interface ContentAdapter {
     body: string;
     title: string | null;
     media: ContentPublishMedia | null;
+    /** Only for a network that fetches the image from a public URL, and only when a host is set up. */
+    hostImage?: ContentHostImage;
   }): Effect.Effect<ContentPublishResult, ContentAdapterError>;
   checkPostStatus(input: {
     accessToken: string;
@@ -101,6 +113,8 @@ export interface ContentAdapterOptions {
 }
 
 export const CONTENT_REQUEST_TIMEOUT_MS = 30_000;
+/** A network that still processes a post after this time has failed: Meta containers expire after 24 h. */
+export const CONTENT_PENDING_LIMIT_MS = 24 * 60 * 60_000;
 export const CONTENT_UPLOAD_TIMEOUT_MS = 120_000;
 
 /** A random `state` and a PKCE S256 pair (RFC 7636). */

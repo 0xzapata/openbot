@@ -119,6 +119,7 @@ export function contentPostView(post: ContentPost): ContentPostView {
       publishedAt: variant.publishedAt,
       createdAt: variant.createdAt,
       updatedAt: variant.updatedAt,
+      pendingReason: variant.pendingReason ?? null,
     })),
   };
 }
@@ -155,6 +156,9 @@ export interface ContentServiceOptions {
   now: () => Date;
 }
 
+/** Meta asks for the app secret in the token exchange. A YouTube Desktop client has no confidential secret. */
+const NEEDS_SECRET: ReadonlySet<ContentPlatform> = new Set(["linkedin", "instagram", "threads", "facebook_page"]);
+
 export class ContentService {
   readonly #store: ContentStore;
   readonly #accounts: ContentAccounts;
@@ -181,7 +185,7 @@ export class ContentService {
           configured: app !== null,
           clientId: app?.clientId ?? null,
           hasSecret: Boolean(app?.clientSecret),
-          needsSecret: platform === "linkedin",
+          needsSecret: NEEDS_SECRET.has(platform),
         },
         account: account ? accountView(account) : null,
       });
@@ -190,6 +194,7 @@ export class ContentService {
       networks,
       connecting: this.#accounts.connecting,
       secretStorage: this.#accounts.canPersist,
+      mediaHost: this.#accounts.mediaHostView(),
     };
     return state;
   });
@@ -209,8 +214,15 @@ export class ContentService {
     const clientId = input.clientId ?? saved?.clientId;
     if (!clientId) return yield* refuse(sourceText("error.content.addApp", { network }));
     const clientSecret = input.clientSecret ?? saved?.clientSecret ?? null;
-    if (input.platform === "linkedin" && !clientSecret)
+    if (NEEDS_SECRET.has(input.platform) && !clientSecret)
       return yield* refuse(sourceText("error.content.addSecret", { network }));
+    // The host is checked and saved first: Instagram cannot post without it.
+    if (input.mediaHost) {
+      yield* this.#accounts.saveMediaHost(input.mediaHost).pipe(Effect.mapError(failure));
+      // New host values for a connected account: saved, and no new sign-in.
+      if (this.#store.connectedAccount(input.platform)) return yield* this.listAccounts();
+    } else if (input.platform === "instagram" && !this.#accounts.mediaHost())
+      return yield* refuse(sourceText("error.content.instagramNeedsHost"));
     if (input.clientId !== undefined || input.clientSecret !== undefined)
       yield* this.#accounts.setApp(input.platform, { clientId, clientSecret }).pipe(Effect.mapError(failure));
     yield* this.#accounts.connect(input.platform).pipe(Effect.mapError(failure));

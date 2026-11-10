@@ -1,4 +1,9 @@
-import type { ContentAccountsState, ContentNetworkView, ContentPlatform } from "@openbot/contracts/ipc-content";
+import type {
+  ContentAccountsState,
+  ContentMediaHostInput,
+  ContentNetworkView,
+  ContentPlatform,
+} from "@openbot/contracts/ipc-content";
 import {
   Alert,
   AlertActions,
@@ -53,7 +58,17 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
     disconnect: ContentNetworkView | null;
     /** The sign-in that this window started, before the first refresh shows it. */
     starting: ContentPlatform | null;
-  }>({ setup: null, clientId: "", clientSecret: "", errors: {}, disconnect: null, starting: null });
+    /** The image host fields of the Instagram row. The two keys are never filled from main. */
+    host: Required<ContentMediaHostInput>;
+  }>({
+    setup: null,
+    clientId: "",
+    clientSecret: "",
+    errors: {},
+    disconnect: null,
+    starting: null,
+    host: { endpoint: "", bucket: "", publicBaseUrl: "", accessKeyId: "", secretAccessKey: "" },
+  });
   const accounts = () => props.content.state.accounts;
   const connecting = () => state.starting ?? accounts()?.connecting ?? null;
   const open = () => props.content.state.accountsDialog !== null;
@@ -70,8 +85,39 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
       draft.setup = null;
       draft.clientId = "";
       draft.clientSecret = "";
+      draft.host.accessKeyId = "";
+      draft.host.secretAccessKey = "";
     });
   });
+  const hostView = () => accounts()?.mediaHost ?? null;
+  /** The host fields that the Instagram row sends; an empty key field keeps the saved key. */
+  const hostInput = (): ContentMediaHostInput => ({
+    endpoint: state.host.endpoint.trim(),
+    bucket: state.host.bucket.trim(),
+    publicBaseUrl: state.host.publicBaseUrl.trim(),
+    ...(state.host.accessKeyId.trim() ? { accessKeyId: state.host.accessKeyId.trim() } : {}),
+    ...(state.host.secretAccessKey ? { secretAccessKey: state.host.secretAccessKey } : {}),
+  });
+  const hostIncomplete = () =>
+    !state.host.endpoint.trim() ||
+    !state.host.bucket.trim() ||
+    !state.host.publicBaseUrl.trim() ||
+    (!hostView()?.hasKeys && (!state.host.accessKeyId.trim() || !state.host.secretAccessKey));
+  /** Opens the setup fields of a network, with the saved values. */
+  const openSetup = (network: ContentNetworkView) =>
+    setState((draft) => {
+      draft.setup = network.platform;
+      draft.clientId = network.app.clientId ?? "";
+      draft.clientSecret = "";
+      const host = hostView();
+      draft.host = {
+        endpoint: host?.endpoint ?? "",
+        bucket: host?.bucket ?? "",
+        publicBaseUrl: host?.publicBaseUrl ?? "",
+        accessKeyId: "",
+        secretAccessKey: "",
+      };
+    });
 
   const setError = (platform: ContentPlatform, error: string | undefined) =>
     setState((draft) => {
@@ -93,22 +139,25 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
   }
 
   function connect(network: ContentNetworkView) {
-    // X and LinkedIn need the client ID of the user's own app first; LinkedIn also its secret.
-    const needsApp = !network.app.configured || (network.app.needsSecret && !network.app.hasSecret);
+    // Each network needs the client ID of the user's own app first, some also its secret. Instagram
+    // needs the image host too.
+    const needsApp =
+      !network.app.configured ||
+      (network.app.needsSecret && !network.app.hasSecret) ||
+      (network.platform === "instagram" && !hostView()?.configured);
     if (needsApp && state.setup !== network.platform) {
-      setState((draft) => {
-        draft.setup = network.platform;
-        draft.clientId = network.app.clientId ?? "";
-        draft.clientSecret = "";
-      });
+      openSetup(network);
       return;
     }
     const clientId = state.setup === network.platform ? state.clientId.trim() : "";
     const clientSecret = state.setup === network.platform ? state.clientSecret : "";
+    const mediaHost = state.setup === "instagram" && network.platform === "instagram" ? hostInput() : null;
     // The wait shows at once, so a second click cannot start, or cancel, a second sign-in.
     setState((draft) => {
       draft.setup = null;
       draft.clientSecret = "";
+      draft.host.accessKeyId = "";
+      draft.host.secretAccessKey = "";
       draft.starting = network.platform;
     });
     // `beginConnect` ends when the sign-in ends; `connecting` shows the wait meanwhile.
@@ -117,6 +166,7 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
         platform: network.platform,
         ...(clientId ? { clientId } : {}),
         ...(clientSecret ? { clientSecret } : {}),
+        ...(mediaHost ? { mediaHost } : {}),
       }),
     ).finally(() =>
       setState((draft) => {
@@ -124,6 +174,19 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
       }),
     );
     void props.content.reloadAccounts();
+  }
+
+  /** New image host values for a connected Instagram account: main checks and saves them, with no sign-in. */
+  function saveHost(network: ContentNetworkView) {
+    const mediaHost = hostInput();
+    setState((draft) => {
+      draft.setup = null;
+      draft.host.accessKeyId = "";
+      draft.host.secretAccessKey = "";
+    });
+    void call(network.platform, () =>
+      props.content.port().content.beginConnect({ platform: network.platform, mediaHost }),
+    );
   }
 
   const cancel = (platform: ContentPlatform) =>
@@ -227,7 +290,7 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
                                   </Text>
                                 )}
                               </Show>
-                              <Show when={state.setup === network().platform}>
+                              <Show when={state.setup === network().platform && account()?.status !== "connected"}>
                                 <div class="content-account-app">
                                   <Field
                                     label={t("content.accounts.clientId", { network: name() })}
@@ -249,7 +312,7 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
                                     <Field
                                       label={t("content.accounts.clientSecret", { network: name() })}
                                       description={t("content.accounts.clientSecretHint")}
-                                      required
+                                      required={!network().app.hasSecret}
                                     >
                                       <Input
                                         type="password"
@@ -264,6 +327,90 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
                                     </Field>
                                   </Show>
                                 </div>
+                              </Show>
+                              <Show when={network().platform === "instagram" && network().available}>
+                                <Show when={hostView()?.configured && state.setup !== "instagram"}>
+                                  <Text variant="caption">{t("content.accounts.mediaHost.configured")}</Text>
+                                </Show>
+                                <Show when={state.setup === "instagram"}>
+                                  <fieldset class="content-account-app">
+                                    <legend>{t("content.accounts.mediaHost.title")}</legend>
+                                    <Text variant="caption">{t("content.accounts.mediaHost.description")}</Text>
+                                    <Field label={t("content.accounts.mediaHost.endpoint")} required>
+                                      <Input
+                                        type="url"
+                                        value={state.host.endpoint}
+                                        autocomplete="off"
+                                        spellcheck={false}
+                                        onValueChange={(value) =>
+                                          setState((draft) => {
+                                            draft.host.endpoint = value;
+                                          })
+                                        }
+                                      />
+                                    </Field>
+                                    <Field label={t("content.accounts.mediaHost.bucket")} required>
+                                      <Input
+                                        value={state.host.bucket}
+                                        autocomplete="off"
+                                        spellcheck={false}
+                                        onValueChange={(value) =>
+                                          setState((draft) => {
+                                            draft.host.bucket = value;
+                                          })
+                                        }
+                                      />
+                                    </Field>
+                                    <Field
+                                      label={t("content.accounts.mediaHost.publicBaseUrl")}
+                                      description={t("content.accounts.mediaHost.publicBaseUrlHint")}
+                                      required
+                                    >
+                                      <Input
+                                        type="url"
+                                        value={state.host.publicBaseUrl}
+                                        autocomplete="off"
+                                        spellcheck={false}
+                                        onValueChange={(value) =>
+                                          setState((draft) => {
+                                            draft.host.publicBaseUrl = value;
+                                          })
+                                        }
+                                      />
+                                    </Field>
+                                    <Field
+                                      label={t("content.accounts.mediaHost.accessKeyId")}
+                                      description={t("content.accounts.mediaHost.keysHint")}
+                                      required={!hostView()?.hasKeys}
+                                    >
+                                      <Input
+                                        type="password"
+                                        value={state.host.accessKeyId}
+                                        autocomplete="off"
+                                        onValueChange={(value) =>
+                                          setState((draft) => {
+                                            draft.host.accessKeyId = value;
+                                          })
+                                        }
+                                      />
+                                    </Field>
+                                    <Field
+                                      label={t("content.accounts.mediaHost.secretAccessKey")}
+                                      required={!hostView()?.hasKeys}
+                                    >
+                                      <Input
+                                        type="password"
+                                        value={state.host.secretAccessKey}
+                                        autocomplete="off"
+                                        onValueChange={(value) =>
+                                          setState((draft) => {
+                                            draft.host.secretAccessKey = value;
+                                          })
+                                        }
+                                      />
+                                    </Field>
+                                  </fieldset>
+                                </Show>
                               </Show>
                             </ItemContent>
                             <Show when={badge()}>
@@ -285,7 +432,33 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
                                       {t("common.cancel")}
                                     </Button>
                                   </Match>
+                                  <Match when={account()?.status === "connected" && state.setup === "instagram"}>
+                                    <Button
+                                      variant="outline"
+                                      size="xs"
+                                      disabled={hostIncomplete()}
+                                      onClick={() => saveHost(network())}
+                                    >
+                                      {t("common.save")}
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="xs"
+                                      onClick={() =>
+                                        setState((draft) => {
+                                          draft.setup = null;
+                                        })
+                                      }
+                                    >
+                                      {t("common.cancel")}
+                                    </Button>
+                                  </Match>
                                   <Match when={account()?.status === "connected"}>
+                                    <Show when={network().platform === "instagram"}>
+                                      <Button variant="ghost" size="xs" onClick={() => openSetup(network())}>
+                                        {t("content.accounts.mediaHost.title")}
+                                      </Button>
+                                    </Show>
                                     <Button
                                       variant="ghost"
                                       size="xs"
@@ -308,7 +481,8 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
                                           (!state.clientId.trim() ||
                                             (network().app.needsSecret &&
                                               !network().app.hasSecret &&
-                                              !state.clientSecret)))
+                                              !state.clientSecret) ||
+                                            (network().platform === "instagram" && hostIncomplete())))
                                       }
                                       onClick={() => connect(network())}
                                     >

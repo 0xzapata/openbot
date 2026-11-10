@@ -36,11 +36,19 @@ import {
   browserProxyConnection,
   createBrowserProfileService,
 } from "./browser-profile-service";
-import { CONTENT_APPS_FILE, ContentAccounts, contentCallbackListener } from "./content/content-accounts";
+import {
+  CONTENT_APPS_FILE,
+  CONTENT_MEDIA_HOST_FILE,
+  ContentAccounts,
+  contentCallbackListener,
+} from "./content/content-accounts";
+import { R2MediaHost } from "./content/content-media-host";
 import { ContentPublisher } from "./content/content-publisher";
 import { ContentService } from "./content/content-service";
 import { LinkedInAdapter } from "./content/linkedin-adapter";
+import { FacebookPageAdapter, InstagramAdapter, ThreadsAdapter } from "./content/meta-adapters";
 import { XAdapter } from "./content/x-adapter";
+import { YouTubeAdapter } from "./content/youtube-adapter";
 import { feedbackFacts, feedbackSender } from "./feedback";
 import { HostReleaseService, readInstallationMode } from "./host-release-service";
 import {
@@ -1975,16 +1983,30 @@ export async function createApplicationServices({
     store: contentStore,
     cipher: secretCipher,
     appsPath: join(app.getPath("userData"), CONTENT_APPS_FILE),
-    adapters: [new XAdapter(contentAdapterOptions), new LinkedInAdapter(contentAdapterOptions)],
+    // Each network with an adapter can be queued: `platforms` derives the publishable list from these.
+    adapters: [
+      new XAdapter(contentAdapterOptions),
+      new LinkedInAdapter(contentAdapterOptions),
+      new InstagramAdapter(contentAdapterOptions),
+      new ThreadsAdapter(contentAdapterOptions),
+      new FacebookPageAdapter(contentAdapterOptions),
+      new YouTubeAdapter(contentAdapterOptions),
+    ],
+    mediaHostPath: join(app.getPath("userData"), CONTENT_MEDIA_HOST_FILE),
+    mediaHost: (settings) => new R2MediaHost({ fetch, now: () => new Date(), settings }),
     openExternal: openLink,
     listen: contentCallbackListener(language),
     now: () => new Date(),
   });
+  // Before the timer can fire: without its host, Instagram is not publishable.
+  await Effect.runPromise(contentAccounts.loadMediaHost());
   const contentPublisher = new ContentPublisher({
     store: contentStore,
     accounts: contentAccounts,
     now: () => new Date(),
   });
+  // Removes the image host objects that a crash or a failed removal left. It does not hold up the start.
+  void Effect.runPromise(contentPublisher.releaseHostedMedia());
   const content = new ContentService({
     store: contentStore,
     accounts: contentAccounts,

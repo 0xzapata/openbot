@@ -1,6 +1,7 @@
 # Content manager: design
 
-Status: step 1 (agent tool) is built. Step 2 (X and LinkedIn publisher) is in progress.
+Status: steps 1 to 3 are built (agent tool; X and LinkedIn publisher; IPC and the Content page). Step 4
+(Instagram, Threads, Facebook Pages and YouTube) is on branch `feat/content-manager-meta`.
 
 ## 0. Settled decisions
 
@@ -20,6 +21,12 @@ disagree. Do not open them again.
 | A | `update-post` can move a queued post back to `draft` (unschedule) and can undo a skip for one network. There is no eleventh endpoint. | Store, step 3 |
 | B | When the user disconnects a network, its variants stay `queued`. At publish time they fail with "Sign in to {network} again." No automatic skip and no move to draft. | Publisher |
 | C | Deleting an agent keeps its posts, its variants and their events. A published variant keeps its external post id for audit. | Agent deletion |
+| D | A network with no adapter in a version is skipped at approve, schedule and publish now, so a post never waits for it. Instagram counts as having no adapter until an image host is saved. | Store, step 3 and 4 |
+| E | `update-post` has an `unapprove` action: the Undo of Approve. | Store, step 3 |
+| F | Instagram and Threads images go through the user's own Cloudflare R2 bucket (default `dev-assets-bucket`, public address `pub-451ea606e71242028630e5aadc8cd8aa.r2.dev`; both are settings). Upload only while that one post publishes; delete after success and failure; delete leftovers at the next start; delete only keys `t/<32 hex>.<ext>` that this code made, one at a time. The user's words: "only for images i choose to post, never automatically". | Publisher, PRIVACY.md |
+| G | The image host settings travel on `content:begin-connect` as an optional `mediaHost`, are checked by a probe (upload, public read, delete) before they are saved, and are shown back only as `configured`, endpoint, bucket, public address and `hasKeys`. | Step 4 |
+| H | Facebook connects only when the user manages exactly one Page in v1. A Page picker comes after v1. | Step 4 |
+| I | A post that a network accepted but has not made live yet (YouTube processing, a Meta container in progress) is `publishing` with `pendingReason: "processing"` in the view. | Contracts, step 4 |
 
 Sections 5 and 6 still describe `content_deliveries`, `needs-attention` and a backoff ladder. Decisions
 3, 6 and 7 replace that text: a variant is the delivery, an unknown result is `failed` with the code
