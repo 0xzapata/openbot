@@ -28,6 +28,7 @@ import {
   type ContentTokens,
   contentRequest,
   formBody,
+  imageOnly,
   oauthSecrets,
   responseJson,
   shortProviderText,
@@ -318,18 +319,19 @@ class ContainerAdapter implements ContentAdapter {
     const network = this.#network;
     const userId = input.profile.externalAccountId;
     const fields: Record<string, string> = { access_token: input.accessToken };
+    const media = yield* imageOnly(input.media);
     if (network.platform === "instagram") {
       // `contentVariantIssues` already asks for an image. Meta takes JPEG only, up to 8 MB.
       // ponytail: no conversion of PNG, WEBP or GIF in v1; convert to JPEG here when users ask.
-      if (!input.media) return yield* invalid(sourceText("error.content.issueNeedsImage"));
-      if (input.media.mimeType !== "image/jpeg" || input.media.bytes.byteLength > INSTAGRAM_IMAGE_BYTES)
+      if (!media) return yield* invalid(sourceText("error.content.issueNeedsImage"));
+      if (media.mimeType !== "image/jpeg" || media.bytes.byteLength > INSTAGRAM_IMAGE_BYTES)
         return yield* invalid(sourceText("error.content.instagramJpegOnly"));
       if (!input.hostImage) return yield* invalid(sourceText("error.content.instagramNeedsHost"));
-      fields.image_url = (yield* input.hostImage(input.media)).url;
+      fields.image_url = (yield* input.hostImage(media)).url;
       fields.caption = input.body;
-    } else if (input.media) {
+    } else if (media) {
       if (!input.hostImage) return yield* invalid(sourceText("error.content.threadsNeedsHost"));
-      fields.image_url = (yield* input.hostImage(input.media)).url;
+      fields.image_url = (yield* input.hostImage(media)).url;
       fields.media_type = "IMAGE";
       fields.text = input.body;
     } else {
@@ -618,9 +620,10 @@ export class FacebookPageAdapter implements ContentAdapter {
   ) {
     const pageId = encodeURIComponent(input.profile.externalAccountId);
     let request: { url: string; body: string | FormData; headers: Record<string, string> };
-    if (input.media) {
+    const media = yield* imageOnly(input.media);
+    if (media) {
       const form = new FormData();
-      form.append("source", new Blob([input.media.bytes], { type: input.media.mimeType }), input.media.name);
+      form.append("source", new Blob([media.bytes], { type: media.mimeType }), media.name);
       form.append("message", input.body);
       form.append("published", "true");
       form.append("access_token", input.accessToken);

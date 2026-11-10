@@ -535,18 +535,43 @@ export class ContentStore {
    * come, and publishing variants whose next check (`checkAt` in `pending_data`) has come. A network with
    * no adapter is not in `platforms`, so its queued variants are never due and the timer does not spin.
    */
-  dueVariants(now: Date, platforms: readonly ContentPlatform[], limit: number): DueContentVariant[] {
+  dueVariants(
+    now: Date,
+    platforms: readonly ContentPlatform[],
+    limit: number,
+    exclude: readonly string[] = [],
+  ): DueContentVariant[] {
     if (platforms.length === 0) return [];
-    const time = now.toISOString();
+    return this.#due(
+      `${DUE_WHERE} AND v.variant_id NOT IN (SELECT value FROM json_each(?)) AND ${DUE_AT} <= ?
+       ORDER BY due_at, v.variant_id LIMIT ?`,
+      JSON.stringify(platforms),
+      JSON.stringify(exclude),
+      now.toISOString(),
+      limit,
+    );
+  }
+
+  /** One variant as `dueVariants` gives it, or null when it is not due now. */
+  dueVariant(variantId: string, now: Date, platforms: readonly ContentPlatform[]): DueContentVariant | null {
+    return (
+      this.#due(
+        `${DUE_WHERE} AND v.variant_id = ? AND ${DUE_AT} <= ?`,
+        JSON.stringify(platforms),
+        variantId,
+        now.toISOString(),
+      )[0] ?? null
+    );
+  }
+
+  #due(where: string, ...values: Array<string | number>): DueContentVariant[] {
     const rows = databaseRows(
       this.#database.connection
         .prepare(
           `SELECT v.*, p.body AS post_body, p.media_json AS post_media_json, ${DUE_AT} AS due_at
-           FROM content_variants v JOIN content_posts p ON p.post_id = v.post_id
-           WHERE ${DUE_WHERE} AND ${DUE_AT} <= ?
-           ORDER BY due_at, v.variant_id LIMIT ?`,
+           FROM content_variants v JOIN content_posts p ON p.post_id = v.post_id WHERE ${where}`,
         )
-        .all(JSON.stringify(platforms), time, limit),
+        .all(...values),
     );
     return rows.flatMap((row) =>
       decodeVariant(row).map((variant) => ({
@@ -559,16 +584,16 @@ export class ContentStore {
     );
   }
 
-  /** The earliest time of the work that `dueVariants` returns, or null. */
-  nextDueAt(platforms: readonly ContentPlatform[]): string | null {
+  /** The earliest time of the work that `dueVariants` returns, or null. `exclude`: variants with a job. */
+  nextDueAt(platforms: readonly ContentPlatform[], exclude: readonly string[] = []): string | null {
     if (platforms.length === 0) return null;
     const row = databaseRow(
       this.#database.connection
         .prepare(
           `SELECT MIN(${DUE_AT}) AS due_at FROM content_variants v JOIN content_posts p ON p.post_id = v.post_id
-           WHERE ${DUE_WHERE}`,
+           WHERE ${DUE_WHERE} AND v.variant_id NOT IN (SELECT value FROM json_each(?))`,
         )
-        .get(JSON.stringify(platforms)),
+        .get(JSON.stringify(platforms), JSON.stringify(exclude)),
     );
     return row ? optionalStringColumn(row, "due_at") : null;
   }

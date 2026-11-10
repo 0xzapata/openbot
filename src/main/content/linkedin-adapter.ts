@@ -17,6 +17,7 @@ import {
   type ContentPublishResult,
   contentRequest,
   formBody,
+  imageOnly,
   oauthSecrets,
   responseJson,
   shortProviderText,
@@ -134,8 +135,9 @@ export class LinkedInAdapter implements ContentAdapter {
     },
   ) {
     const author = `urn:li:person:${input.profile.externalAccountId}`;
-    if (!input.media) return yield* this.#createPost(input.accessToken, author, input.body, null);
-    if (!IMAGE_TYPES.has(input.media.mimeType))
+    const media = yield* imageOnly(input.media);
+    if (!media) return yield* this.#createPost(input.accessToken, author, input.body, null);
+    if (!IMAGE_TYPES.has(media.mimeType))
       return yield* new ContentAdapterError({
         code: "rejected",
         status: null,
@@ -158,7 +160,7 @@ export class LinkedInAdapter implements ContentAdapter {
     const upload = yield* contentRequest(this.#options, NETWORK, value.uploadUrl, {
       method: "PUT",
       headers: { Authorization: `Bearer ${input.accessToken}` },
-      body: input.media.bytes,
+      body: media.bytes,
       timeoutMs: CONTENT_UPLOAD_TIMEOUT_MS,
     });
     if (!upload.ok) return yield* linkedInError(upload, yield* responseJson(upload));

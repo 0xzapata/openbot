@@ -32,6 +32,7 @@ import { AgentStore } from "../src/backend/agent-store";
 import { type ContentPostInput, ContentStateError, ContentStore } from "../src/backend/content/content-store";
 import { runCauseEffect } from "../src/backend/effect-boundary";
 import { OpenBotDatabase } from "../src/backend/openbot-database";
+import { type RoutineDueSource, RoutineTimer } from "../src/backend/routine-timer";
 import { CONTENT_MEDIA_HOST_FILE, ContentAccounts, contentBucketLabel } from "../src/main/content/content-accounts";
 import type { ContentFetch } from "../src/main/content/content-adapter";
 import { contentHostedKey, R2MediaHost } from "../src/main/content/content-media-host";
@@ -117,6 +118,29 @@ const fake: FakeState = {
   linkedInImagePolls: 0,
   rejectTokenOnce: null,
 };
+
+interface Deferred {
+  promise: Promise<void>;
+  resolve: () => void;
+}
+
+function deferred(): Deferred {
+  let resolve = () => {};
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+interface Hold {
+  arrived: Deferred;
+  release: Deferred;
+  signals: AbortSignal[];
+}
+
+function newHold(): Hold {
+  return { arrived: deferred(), release: deferred(), signals: [] };
+}
 
 function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
@@ -288,14 +312,16 @@ try {
     },
     now,
   });
-  const publisher = new ContentPublisher({ store: content, accounts, now });
+  const publisher = new ContentPublisher({ store: content, accounts, now, rearm: () => {} });
   const callback = (name: string, query: Record<string, string>) => {
     assert.ok(receive, "A sign-in listens.");
     const answer = receive(new URL(`${CONTENT_REDIRECT_URI}?${new URLSearchParams(query)}`));
     callbackAnswers.push({ name, answer });
     return answer;
   };
-  const pass = () => Effect.runPromise(publisher.processDue(clock, () => true));
+  // A pass starts jobs and returns; this waits for them.
+  const pass = () =>
+    Effect.runPromise(publisher.processDue(clock, () => true).pipe(Effect.andThen(publisher.whenIdle())));
   const requestsDuring = async (run: () => Promise<unknown>) => {
     const before = requests.length;
     await run();
@@ -963,6 +989,8 @@ try {
     const R2_SECRET = "test-r2-secret-access-key-0123456789";
     const bucket = new Map<string, Buffer>();
     let failDeletes = 0;
+    /** A network request of this route waits for `release`, or fails when its request is aborted. */
+    const holds = new Map<string, Hold>();
     /** Access key ids whose DELETE gets 403, as a key with write and no delete right. */
     const noDeleteKeys = new Set<string>();
     /** While set, a public GET answers only when this promise settles, or fails when its request is aborted. */
@@ -1013,7 +1041,19 @@ try {
       }
       const route = `${method} ${parsed.host}${parsed.pathname}`;
       sent4.push({ route, body: bodyText(init.body) });
+      const hold = holds.get(route);
+      const signal = init.signal;
+      if (hold && signal) {
+        hold.signals.push(signal);
+        hold.arrived.resolve();
+        await new Promise<void>((resolve, reject) => {
+          void hold.release.promise.then(resolve);
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      }
       switch (route) {
+        case "POST api.x.com/2/tweets":
+          return json(201, { data: { id: "x-2001", text: "ok" } });
         case "POST graph.instagram.com/v24.0/ig-1/media":
           return json(200, { id: "ig-c1" });
         case "GET graph.instagram.com/v24.0/ig-c1":
@@ -1082,10 +1122,15 @@ try {
         now,
         ...(hostCheckMs === undefined ? {} : { mediaHostCheckMs: hostCheckMs }),
       });
-      return { store, accounts2, publisher2: new ContentPublisher({ store, accounts: accounts2, now }) };
+      return {
+        store,
+        accounts2,
+        publisher2: new ContentPublisher({ store, accounts: accounts2, now, rearm: () => {} }),
+      };
     };
     let { store: content2, accounts2, publisher2 } = build();
-    const pass2 = () => Effect.runPromise(publisher2.processDue(clock, () => true));
+    const pass2 = () =>
+      Effect.runPromise(publisher2.processDue(clock, () => true).pipe(Effect.andThen(publisher2.whenIdle())));
     const variant2 = (postId: string, platform: ContentPlatform) => {
       const found = content2.readPost(postId)?.variants.find((candidate) => candidate.platform === platform);
       assert.ok(found);
@@ -2018,6 +2063,212 @@ try {
         assert.equal(failed.errorCode, "signed-out");
         assert.equal(failed.error, "Sign in to Facebook again.");
         return { error: failed.error };
+      },
+    );
+
+    const YT_PUT = "PUT www.googleapis.com/upload/youtube/v3/videos";
+    const YT_START = "POST www.googleapis.com/upload/youtube/v3/videos";
+    const fresh = (extra: { rearm?: () => void; deadlineMs?: number } = {}) =>
+      new ContentPublisher({ store: content2, accounts: accounts2, now, rearm: () => {}, ...extra });
+    const run = (publisher: ContentPublisher, active: () => boolean = () => true) =>
+      Effect.runPromise(publisher.processDue(clock, active));
+    const runIdle = (publisher: ContentPublisher) =>
+      Effect.runPromise(publisher.processDue(clock, () => true).pipe(Effect.andThen(publisher.whenIdle())));
+    const video = (title: string) => queued2("youtube", null, { title, media: clip });
+    const starts = () => sent4.filter((entry) => entry.route === YT_START).length;
+
+    await step(
+      "29. A held YouTube upload does not hold the routine timer: the next source runs, then the upload ends",
+      async () => {
+        answers.yt = "processing";
+        const past = "2000-01-01T00:00:00.000Z";
+        const post = video("Held video");
+        // Due in the past, so the real timer fires it at once.
+        database2.connection.prepare("UPDATE content_posts SET scheduled_for = ? WHERE post_id = ?").run(past, post.id);
+        const hold = newHold();
+        holds.set(YT_PUT, hold);
+        const ran = deferred();
+        let fakeDue: string | null = past;
+        let fakeRuns = 0;
+        const fakeSource: RoutineDueSource = {
+          nextDueAt: () => fakeDue,
+          processDue: () =>
+            Effect.sync(() => {
+              fakeRuns += 1;
+              fakeDue = null;
+              ran.resolve();
+            }),
+        };
+        let rearms = 0;
+        const timed = fresh({
+          rearm: () => {
+            rearms += 1;
+            timer.arm();
+          },
+        });
+        const timer: RoutineTimer = new RoutineTimer(
+          () => [timed, fakeSource],
+          () => true,
+          (code) => assert.fail(code),
+        );
+        // The timer's `setTimeout` is unref'd: this keeps the process alive while the step waits.
+        const keepAlive = setInterval(() => {}, 1_000);
+        try {
+          timer.arm();
+          await ran.promise;
+          await hold.arrived.promise;
+          assert.equal(fakeRuns, 1, "The next source ran while the upload is held.");
+          assert.notEqual(timed.nextDueAt(), past, "The running variant is not due.");
+          assert.equal(timed.busy(), true);
+          assert.equal(variant2(post.id, "youtube").status, "publishing");
+          hold.release.resolve();
+          await Effect.runPromise(timed.whenIdle());
+          assert.equal(timed.busy(), false);
+          assert.equal(rearms, 1, "The job's end plans the timer again.");
+          assert.equal(variant2(post.id, "youtube").pendingReason, "processing");
+          answers.yt = "succeeded";
+          clock = new Date(clock.getTime() + 60_000);
+          await runIdle(timed);
+          assert.equal(variant2(post.id, "youtube").status, "published");
+        } finally {
+          clearInterval(keepAlive);
+          timer.dispose();
+          holds.delete(YT_PUT);
+        }
+        return { fakeRuns, rearms };
+      },
+    );
+
+    await step(
+      "30. One job per network: X posts while YouTube uploads; the second video waits unclaimed and sends its new text",
+      async () => {
+        answers.yt = "processing";
+        seed("x", "x-2");
+        // The same due time: the variant id decides which video goes first.
+        const videos = [video("First video"), video("Second video")];
+        const textPost = queued2("x", null);
+        clock = textPost.time;
+        const hold = newHold();
+        holds.set(YT_PUT, hold);
+        const publisher = fresh();
+        const startsBefore = starts();
+        await run(publisher);
+        await hold.arrived.promise;
+        await until(() => variant2(textPost.id, "x").status === "published");
+        const first = videos.find((post) => variant2(post.id, "youtube").status === "publishing");
+        const second = videos.find((post) => post !== first);
+        assert.ok(first && second, "One video uploads.");
+        const waiting = variant2(second.id, "youtube");
+        assert.equal(waiting.status, "queued", "The second video is not claimed.");
+        assert.equal(waiting.attempt, 0);
+        assert.equal(starts() - startsBefore, 1, "One upload session at a time.");
+        assert.equal(content2.nextDueAt(accounts2.adapterPlatforms), second.time.toISOString());
+        assert.notEqual(publisher.nextDueAt(), second.time.toISOString(), "A variant with a job is not due.");
+        content2.editPost(second.id, { variants: [{ platform: "youtube", body: "The new text" }] }, clock);
+        hold.release.resolve();
+        await Effect.runPromise(publisher.whenIdle());
+        holds.delete(YT_PUT);
+        assert.equal(variant2(first.id, "youtube").pendingReason, "processing");
+        assert.equal(variant2(second.id, "youtube").pendingReason, "processing");
+        const sessions = sent4.filter((entry) => entry.route === YT_START).slice(-2);
+        assert.equal(JSON.parse(sessions[1]?.body ?? "{}").snippet?.description, "The new text");
+        return { x: variant2(textPost.id, "x").externalPostId };
+      },
+    );
+
+    await step("31. A suspend while a video waits for its network: no claim and no request", async () => {
+      const videos = [video("Upload in flight"), video("Waits for YouTube")];
+      clock = videos[1]?.time ?? clock;
+      const hold = newHold();
+      holds.set(YT_PUT, hold);
+      let awake = true;
+      const publisher = fresh();
+      const startsBefore = starts();
+      await run(publisher, () => awake);
+      await hold.arrived.promise;
+      const first = videos.find((post) => variant2(post.id, "youtube").status === "publishing");
+      const second = videos.find((post) => post !== first);
+      assert.ok(first && second, "One video uploads.");
+      awake = false;
+      hold.release.resolve();
+      await Effect.runPromise(publisher.whenIdle());
+      holds.delete(YT_PUT);
+      assert.equal(variant2(first.id, "youtube").pendingReason, "processing");
+      const waiting = variant2(second.id, "youtube");
+      assert.equal(waiting.status, "queued");
+      assert.equal(waiting.attempt, 0);
+      assert.equal(starts() - startsBefore, 1, "The waiting video sent nothing.");
+      assert.equal(publisher.nextDueAt(), second.time.toISOString(), "It is due after the resume.");
+      content2.unschedulePost(second.id, clock);
+      return { status: waiting.status };
+    });
+
+    await step(
+      "32. A job past its deadline is aborted and fails unknown-result; the network is free again",
+      async () => {
+        const post = video("Never answers");
+        clock = post.time;
+        const hold = newHold();
+        holds.set(YT_PUT, hold);
+        const publisher = fresh({ deadlineMs: 50 });
+        await runIdle(publisher);
+        holds.delete(YT_PUT);
+        assert.equal(hold.signals[0]?.aborted, true, "The request was aborted.");
+        const failed = variant2(post.id, "youtube");
+        assert.equal(failed.status, "failed");
+        assert.equal(failed.errorCode, "unknown-result");
+        assert.equal(failed.error, sourceText("error.content.notFinished", { network: "YouTube" }));
+        const next = video("After the deadline");
+        clock = next.time;
+        await runIdle(publisher);
+        assert.equal(variant2(next.id, "youtube").pendingReason, "processing");
+        return { error: failed.error };
+      },
+    );
+
+    await step(
+      "33. Quit: a held upload fails interrupted and keeps its image key; a held check keeps its next check",
+      async () => {
+        if (!accounts2.mediaHost()) await Effect.runPromise(accounts2.loadMediaHost());
+        assert.ok(accounts2.mediaHost(), "An image host is set up.");
+        answers.yt = "processing";
+        const checked = video("Checked at quit");
+        clock = checked.time;
+        await runIdle(fresh());
+        assert.equal(variant2(checked.id, "youtube").pendingReason, "processing");
+        const image = queued2("threads", pngPhoto);
+        clock = image.time;
+        const check = newHold();
+        const upload = newHold();
+        holds.set("GET www.googleapis.com/youtube/v3/videos", check);
+        holds.set("POST graph.threads.com/v1.0/th-1/threads", upload);
+        const publisher = fresh();
+        await run(publisher);
+        await Promise.all([check.arrived.promise, upload.arrived.promise]);
+        assert.equal(publisher.busy(), true);
+        const imageVariant = variant2(image.id, "threads").id;
+        const kept = content2.hostedKey(imageVariant);
+        assert.ok(kept, "The image is on the host.");
+        r2Log.length = 0;
+        await Effect.runPromise(publisher.dispose());
+        holds.clear();
+        assert.equal(publisher.busy(), false);
+        assert.equal(upload.signals[0]?.aborted, true, "The upload was aborted.");
+        assert.equal(check.signals[0]?.aborted, true, "The check was aborted.");
+        const failed = variant2(image.id, "threads");
+        assert.equal(failed.status, "failed");
+        assert.equal(failed.errorCode, "unknown-result");
+        assert.equal(failed.error, sourceText("error.content.interrupted", { network: "Threads" }));
+        assert.deepEqual(content2.hostedKey(imageVariant), kept, "The key stays with its bucket.");
+        assert.ok(bucket.has(kept.key));
+        assert.equal(r2Log.length, 0, "No request reaches the bucket at quit.");
+        const stillChecked = variant2(checked.id, "youtube");
+        assert.equal(stillChecked.status, "publishing");
+        assert.ok(JSON.parse(pendingRow(stillChecked.id) ?? "{}").checkAt, "The next check stays.");
+        // The next start removes the object.
+        await Effect.runPromise(fresh().releaseHostedMedia());
+        assert.equal(bucket.has(kept.key), false);
+        return { kept: kept.key };
       },
     );
 

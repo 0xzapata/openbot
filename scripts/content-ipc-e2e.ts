@@ -228,7 +228,10 @@ try {
     },
     now,
   });
-  const publisher = new ContentPublisher({ store, accounts, now });
+  const publisher = new ContentPublisher({ store, accounts, now, rearm: () => {} });
+  // A pass starts jobs and returns; this waits for them.
+  const pass = () =>
+    Effect.runPromise(publisher.processDue(clock, () => true).pipe(Effect.andThen(publisher.whenIdle())));
   const service = new ContentService({
     store,
     accounts,
@@ -678,7 +681,7 @@ try {
     );
     assert.deepEqual(fired, [{ postId: created.id }]);
     assert.equal(statusOf(queued, "x"), "queued");
-    const { fired: passEvents } = await changesDuring(() => Effect.runPromise(publisher.processDue(clock, () => true)));
+    const { fired: passEvents } = await changesDuring(() => pass());
     // The pending post of step 4 is not due yet; only this post moves: claim, then finish.
     assert.deepEqual(passEvents, [{ postId: created.id }, { postId: created.id }]);
     const [after] = (await call.posts({ limit: 100 })).filter((post) => post.id === created.id);
@@ -701,7 +704,7 @@ try {
     });
     createdIds.push(created.id);
     await call.post(endpoints.publishNow.channel, { postId: created.id });
-    await Effect.runPromise(publisher.processDue(clock, () => true));
+    await pass();
     const failed = (await call.posts({})).find((post) => post.id === created.id);
     const x = failed?.variants.find((variant) => variant.platform === "x");
     assert.equal(x?.status, "failed");
@@ -717,7 +720,7 @@ try {
     );
     assert.deepEqual(fired, [{ postId: created.id }]);
     assert.equal(statusOf(retried, "x"), "queued");
-    await Effect.runPromise(publisher.processDue(clock, () => true));
+    await pass();
     assert.equal(statusOf(await listed(created.id), "x"), "published");
     await refused(
       endpoints.updatePost.channel,
@@ -756,7 +759,7 @@ try {
     assert.equal(after.networks.find((network) => network.platform === "x")?.account?.status, "revoked");
     assert.equal(statusOf(await listed(created.id), "x"), "queued", "No auto-skip and no move to draft.");
     clock = new Date(time);
-    await Effect.runPromise(publisher.processDue(clock, () => true));
+    await pass();
     const failed = (await call.posts({})).find((post) => post.id === created.id);
     const x = failed?.variants.find((variant) => variant.platform === "x");
     assert.equal(x?.status, "failed");

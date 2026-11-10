@@ -8,7 +8,7 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
-import type { ContentMediaKind, ContentPendingReason, ContentPlatform } from "@openbot/contracts/ipc-content";
+import type { ContentPendingReason, ContentPlatform } from "@openbot/contracts/ipc-content";
 import { isDynamicRecord } from "@openbot/contracts/runtime-values";
 import { sourceText } from "@openbot/i18n/source";
 import { redactText } from "@openbot/logging";
@@ -41,11 +41,22 @@ export type ContentPublishResult =
    */
   | { kind: "pending"; pendingData: string; checkAfterMs: number; reason?: ContentPendingReason };
 
-export interface ContentPublishMedia {
-  kind: ContentMediaKind;
-  mimeType: string;
-  bytes: Uint8Array<ArrayBuffer>;
-  name: string;
+/** An image is read into memory: R2 hashes its bytes. A video stays a file-backed Blob that is read as it is sent. */
+export type ContentPublishMedia =
+  | { kind: "image"; mimeType: string; name: string; bytes: Uint8Array<ArrayBuffer> }
+  | { kind: "video"; mimeType: string; name: string; file: Blob };
+
+export type ContentPublishImage = Extract<ContentPublishMedia, { kind: "image" }>;
+
+/** The media of a network that takes images only. `contentVariantIssues` already refuses a video there. */
+export function imageOnly(
+  media: ContentPublishMedia | null,
+): Effect.Effect<ContentPublishImage | null, ContentAdapterError> {
+  if (media?.kind === "video")
+    return Effect.fail(
+      new ContentAdapterError({ code: "invalid", status: null, message: sourceText("error.content.issueImagesOnly") }),
+    );
+  return Effect.succeed(media);
 }
 
 export const CONTENT_ADAPTER_ERROR_CODES = [
@@ -67,7 +78,7 @@ export class ContentAdapterError extends Schema.TaggedError<ContentAdapterError>
 }) {}
 
 /** Puts the image of one publish on the image host, and gives its public URL. */
-export type ContentHostImage = (media: ContentPublishMedia) => Effect.Effect<{ url: string }, ContentAdapterError>;
+export type ContentHostImage = (media: ContentPublishImage) => Effect.Effect<{ url: string }, ContentAdapterError>;
 
 export interface ContentAdapter {
   readonly platform: ContentPlatform;

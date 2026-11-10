@@ -14,6 +14,7 @@ import type {
   ContentAdapter,
   ContentAdapterError,
   ContentFetch,
+  ContentPublishImage,
   ContentPublishMedia,
   ContentPublishResult,
 } from "../src/main/content/content-adapter";
@@ -87,6 +88,8 @@ interface RecordedRequest {
   headers: Record<string, string>;
   body: string;
   bytes: number;
+  /** The body as sent, when it is a Blob. */
+  blob: Blob | null;
 }
 const requests: RecordedRequest[] = [];
 type Handler = (request: RecordedRequest) => Response | Promise<Response>;
@@ -109,6 +112,7 @@ function bodyText(body: RequestInit["body"]): { text: string; bytes: number } {
       bytes: 0,
     };
   if (body instanceof Uint8Array) return { text: `<bytes ${body.byteLength}>`, bytes: body.byteLength };
+  if (body instanceof Blob) return { text: `<blob ${body.size}>`, bytes: body.size };
   return { text: "", bytes: 0 };
 }
 
@@ -122,6 +126,7 @@ const fakeFetch: ContentFetch = async (url, init) => {
     headers: Object.fromEntries(new Headers(init.headers).entries()),
     body: text,
     bytes,
+    blob: init.body instanceof Blob ? init.body : null,
   };
   requests.push(recorded);
   const handler = routes.get(recorded.route);
@@ -136,9 +141,14 @@ const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
 // A few KB of fake video bytes: the adapters never look inside.
 const VIDEO = new Uint8Array(4096).map((_, index) => index % 251);
-const jpeg: ContentPublishMedia = { kind: "image", mimeType: "image/jpeg", bytes: JPEG, name: "photo.jpg" };
-const png: ContentPublishMedia = { kind: "image", mimeType: "image/png", bytes: PNG, name: "photo.png" };
-const video: ContentPublishMedia = { kind: "video", mimeType: "video/mp4", bytes: VIDEO, name: "clip.mp4" };
+const jpeg: ContentPublishImage = { kind: "image", mimeType: "image/jpeg", bytes: JPEG, name: "photo.jpg" };
+const png: ContentPublishImage = { kind: "image", mimeType: "image/png", bytes: PNG, name: "photo.png" };
+const video: ContentPublishMedia = {
+  kind: "video",
+  mimeType: "video/mp4",
+  file: new Blob([VIDEO], { type: "video/mp4" }),
+  name: "clip.mp4",
+};
 
 const run = <A>(effect: Effect.Effect<A, ContentAdapterError>) => Effect.runPromise(effect);
 const flip = <A>(effect: Effect.Effect<A, ContentAdapterError>) => Effect.runPromise(Effect.flip(effect));
@@ -203,6 +213,7 @@ const r2Fetch: ContentFetch = async (url, init) => {
       headers: Object.fromEntries(new Headers(init.headers).entries()),
       body: bodyText(init.body).text,
       bytes: bodyText(init.body).bytes,
+      blob: null,
     };
     requests.push(recorded);
     return r2Route(recorded);
@@ -215,6 +226,7 @@ const r2Fetch: ContentFetch = async (url, init) => {
       headers: {},
       body: "",
       bytes: 0,
+      blob: null,
     });
     const object = bucket.get(parsed.pathname.slice(1));
     return object ? new Response(new Uint8Array(object), { status: 200 }) : new Response(null, { status: 404 });
@@ -229,7 +241,7 @@ const hostSettings = {
   secretAccessKey: SECRETS.r2Secret,
 };
 const host = new R2MediaHost({ fetch: r2Fetch, now: () => clock, settings: hostSettings });
-const hostImage = (media: ContentPublishMedia) => {
+const hostImage = (media: ContentPublishImage) => {
   const key = contentHostedKey(media.mimeType);
   assert.ok(key);
   return host.put(media, key);
@@ -837,6 +849,8 @@ try {
       });
       assert.equal(put.url.toString(), SESSION);
       assert.equal(put.bytes, VIDEO.byteLength);
+      assert.ok(put.blob, "The PUT body is the Blob of the file, not a copy of its bytes.");
+      assert.deepEqual(new Uint8Array(await put.blob.arrayBuffer()), VIDEO);
       const pending = pendingOf(value);
       assert.equal(pending.checkAfterMs, 60_000);
       let processing = "processing";
@@ -922,6 +936,9 @@ try {
         ],
       );
       assert.equal(pendingOf(resumed.value).kind, "pending");
+      const rest = resumed.sent[3]?.blob;
+      assert.ok(rest, "The resume sends a slice of the Blob.");
+      assert.deepEqual(new Uint8Array(await rest.arrayBuffer()), VIDEO.subarray(1024));
 
       puts = 0;
       let starts = 0;

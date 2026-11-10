@@ -149,7 +149,7 @@ export class YouTubeAdapter implements ContentAdapter {
     // `unknown`: the last answer did not say how much the session has, so YouTube may have the whole video.
     let unknown = false;
     let waitMs: number | null = null;
-    const total = media.bytes.byteLength;
+    const total = media.file.size;
     for (let attempt = 0; attempt < UPLOAD_ATTEMPTS; attempt += 1) {
       let answer: SessionState;
       if (unknown && session !== null) {
@@ -169,7 +169,8 @@ export class YouTubeAdapter implements ContentAdapter {
             "Content-Type": media.mimeType,
             ...(from > 0 ? { "Content-Range": `bytes ${from}-${total - 1}/${total}` } : {}),
           },
-          body: from > 0 ? media.bytes.subarray(from) : media.bytes,
+          // A file-backed Blob: `fetch` reads the file as it sends it.
+          body: from > 0 ? media.file.slice(from) : media.file,
           timeoutMs: VIDEO_UPLOAD_TIMEOUT_MS,
         }).pipe(Effect.result);
         if (put._tag === "Success" && put.success.status < 500) {
@@ -203,14 +204,14 @@ export class YouTubeAdapter implements ContentAdapter {
     this: YouTubeAdapter,
     accessToken: string,
     metadata: string,
-    media: ContentPublishMedia,
+    media: Extract<ContentPublishMedia, { kind: "video" }>,
   ) {
     const response = yield* contentRequest(this.#options, NETWORK, UPLOAD_URL, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json; charset=UTF-8",
-        "X-Upload-Content-Length": String(media.bytes.byteLength),
+        "X-Upload-Content-Length": String(media.file.size),
         "X-Upload-Content-Type": media.mimeType,
       },
       body: metadata,

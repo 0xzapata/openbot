@@ -16,6 +16,7 @@ import {
   type ContentPublishResult,
   contentRequest,
   formBody,
+  imageOnly,
   oauthSecrets,
   responseJson,
   shortProviderText,
@@ -101,9 +102,10 @@ export class XAdapter implements ContentAdapter {
       media: ContentPublishMedia | null;
     },
   ) {
-    if (!input.media) return yield* this.#createPost(input.accessToken, input.body, null);
+    const media = yield* imageOnly(input.media);
+    if (!media) return yield* this.#createPost(input.accessToken, input.body, null);
     const form = new FormData();
-    form.append("media", new Blob([input.media.bytes], { type: input.media.mimeType }), input.media.name);
+    form.append("media", new Blob([media.bytes], { type: media.mimeType }), media.name);
     form.append("media_category", "tweet_image");
     const response = yield* contentRequest(this.#options, NETWORK, MEDIA_URL, {
       method: "POST",

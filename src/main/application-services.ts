@@ -573,6 +573,8 @@ const TEARDOWN_ORDER = {
   // Before the agent service, so no script starts a run while the service stops.
   automation: 108,
   storageUsage: 109,
+  // Before the agent service and the database: a publish that it cuts off fails before the database closes.
+  contentPublisher: 109.5,
   service: 110,
   mcpOAuth: 111,
   analytics: 112,
@@ -2004,7 +2006,11 @@ export async function createApplicationServices({
     store: contentStore,
     accounts: contentAccounts,
     now: () => new Date(),
+    rearm: () => service.armRoutines(),
   });
+  teardown.push(TEARDOWN_ORDER.contentPublisher, "the content publisher", () =>
+    Effect.runPromise(contentPublisher.dispose()),
+  );
   // Removes the image host objects that a crash or a failed removal left. It does not hold up the start.
   void Effect.runPromise(contentPublisher.releaseHostedMedia());
   const content = new ContentService({
@@ -3797,7 +3803,12 @@ export async function createApplicationServices({
   const describeRestartReadiness = (): RestartReadiness =>
     checkRestartReadiness({
       // A workflow model step lives in this process only; agent steps are queued deliveries.
-      agentWork: [...service.hasActiveWork(), ...(workflowRuntime.working() ? ["routine-run"] : [])],
+      // ponytail: "content-post" shows as "other work"; add its label with Loupe's copy.
+      agentWork: [
+        ...service.hasActiveWork(),
+        ...(workflowRuntime.working() ? ["routine-run"] : []),
+        ...(contentPublisher.busy() ? ["content-post"] : []),
+      ],
       hostBlockers: host.describeRestartBlockers(),
       activeBrowserControls: browser.getControlState().sessions.length,
       activeFileTransfers: remoteServers.hasActiveTransfers(),
