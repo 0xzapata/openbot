@@ -1,0 +1,451 @@
+/* The Content page: the title, the queue, the composer and the Accounts dialog. Section and title token
+ * values are copied from tasks.css and routine-calendar.css, not imported. */
+
+.content-page {
+  container-type: inline-size;
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--openbot-bg-canvas);
+  color: var(--openbot-text-primary);
+}
+
+.content-page-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  padding: var(--openbot-space-4) var(--openbot-space-6) 0;
+}
+
+.content-page-title h2 {
+  overflow: hidden;
+  font-size: var(--openbot-text-lg);
+  font-weight: var(--openbot-weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.content-page-title h2 span {
+  color: var(--openbot-text-muted);
+  font-weight: var(--openbot-weight-regular);
+}
+
+.content-page-body {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.content-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--openbot-space-2);
+  padding: var(--openbot-space-4) var(--openbot-space-6) 0;
+}
+
+.content-actions {
+  display: flex;
+  gap: var(--openbot-space-2);
+}
+
+/* Queue: sections like the Tasks page. */
+.content-queue {
+  display: flex;
+  width: 100%;
+  max-width: 56rem;
+  flex-direction: column;
+  gap: var(--openbot-space-4);
+  margin: 0 auto;
+  padding: var(--openbot-space-4) var(--openbot-space-6) var(--openbot-space-8);
+}
+
+.content-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--openbot-space-0-5);
+}
+
+.content-section-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--openbot-space-1-5);
+  margin: 0;
+  padding: var(--openbot-space-1) var(--openbot-space-2);
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-sm);
+  font-weight: var(--openbot-weight-medium);
+}
+
+.content-section-count {
+  font-weight: var(--openbot-weight-regular);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Done fades as closed tasks do. */
+.content-section[data-closed] .ui-item {
+  opacity: 0.55;
+}
+
+.content-show-all.ui-button {
+  align-self: flex-start;
+}
+
+.content-queue-loading {
+  display: grid;
+  gap: var(--openbot-space-4);
+}
+
+.content-skeleton-heading {
+  width: 96px;
+  height: var(--openbot-space-4);
+}
+
+.content-skeleton-row {
+  height: 52px;
+}
+
+.content-row-time {
+  width: 4rem;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-sm);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--openbot-leading-sm);
+}
+
+.content-row-time[data-none] {
+  color: var(--openbot-text-dim);
+}
+
+.content-row-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--openbot-space-2);
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-sm);
+  line-height: var(--openbot-leading-sm);
+  white-space: nowrap;
+}
+
+.content-row-meta > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.content-row-error {
+  color: var(--openbot-danger-text);
+}
+
+.content-chips {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--openbot-space-1);
+}
+
+.content-row-avatar.agent-avatar {
+  width: var(--openbot-space-4);
+  height: var(--openbot-space-4);
+  flex: 0 0 auto;
+}
+
+/* Composer: two columns at 920px and wider. */
+.content-composer {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+}
+
+.content-composer-header {
+  display: flex;
+  align-items: center;
+  gap: var(--openbot-space-2);
+  padding: var(--openbot-space-4) var(--openbot-space-6) 0;
+}
+
+.content-composer-header .ui-icon-button {
+  margin-inline-start: calc(-1 * var(--openbot-space-2));
+}
+
+.content-composer-header h2 {
+  font-size: var(--openbot-text-xl);
+  font-weight: var(--openbot-weight-semibold);
+}
+
+.content-composer-header h2:focus {
+  outline: none;
+}
+
+.content-composer-header .z-badge {
+  margin-inline-start: auto;
+}
+
+.content-composer-by {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--openbot-space-1-5);
+  margin-inline-start: var(--openbot-space-2);
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-sm);
+}
+
+.content-composer-body {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 26rem);
+  align-items: start;
+  gap: var(--openbot-space-6);
+  padding: var(--openbot-space-4) var(--openbot-space-6);
+}
+
+.content-composer-main,
+.content-composer-field,
+.content-composer-when {
+  display: grid;
+  gap: var(--openbot-space-4);
+}
+
+.content-composer-field,
+.content-composer-when {
+  gap: var(--openbot-space-1-5);
+}
+
+.content-composer-side {
+  display: grid;
+  gap: var(--openbot-space-1-5);
+}
+
+.content-composer-text.ui-textarea {
+  min-height: 180px;
+}
+
+.content-composer-hint {
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-sm);
+  line-height: var(--openbot-leading-sm);
+}
+
+.content-composer-hint[data-tone="danger"] {
+  color: var(--openbot-danger-text);
+}
+
+.content-composer-when-options,
+.content-composer-when-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--openbot-space-2);
+}
+
+/* A radio item with the look of the billing timing choice. */
+.content-radio {
+  display: flex;
+  align-items: center;
+  gap: var(--openbot-space-2);
+  font-size: var(--openbot-text-sm);
+}
+
+.content-radio label {
+  cursor: pointer;
+}
+
+.content-radio-control {
+  width: var(--openbot-icon-md);
+  height: var(--openbot-icon-md);
+  flex-shrink: 0;
+  border: 1px solid var(--openbot-border-strong);
+  border-radius: var(--openbot-radius-pill);
+}
+
+.content-radio-control[data-checked] {
+  border-color: var(--openbot-accent);
+  background: var(--openbot-accent);
+  box-shadow: inset 0 0 0 3px var(--openbot-bg-canvas);
+}
+
+.content-radio[data-focus-visible] .content-radio-control {
+  outline: 2px solid var(--openbot-accent);
+  outline-offset: 2px;
+}
+
+.content-networks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.content-network-row {
+  display: grid;
+  gap: var(--openbot-space-2);
+  padding: var(--openbot-space-3) var(--openbot-space-4);
+}
+
+.content-network-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--openbot-space-2);
+}
+
+.content-network-mark {
+  width: var(--openbot-icon-lg);
+  height: var(--openbot-icon-lg);
+  flex: 0 0 auto;
+  color: var(--openbot-text-secondary);
+}
+
+.content-network-name {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.content-network-name strong {
+  font-size: var(--openbot-text-md);
+  font-weight: var(--openbot-weight-medium);
+}
+
+.content-network-name small {
+  overflow: hidden;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.content-network-name .content-network-danger {
+  color: var(--openbot-danger-text);
+}
+
+.content-network-row[data-disabled] .content-network-head > :not(.ui-button) {
+  opacity: 0.55;
+}
+
+.content-network-text {
+  display: flex;
+  align-items: center;
+  gap: var(--openbot-space-3);
+  padding-inline-start: 48px;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-sm);
+}
+
+.content-network-text .ui-button-variant-link {
+  font-size: var(--openbot-text-sm);
+  text-decoration: underline;
+}
+
+.content-network-own.ui-textarea {
+  width: calc(100% - 48px);
+  min-height: 96px;
+  margin-inline-start: 48px;
+  font-size: var(--openbot-text-sm);
+}
+
+.content-network-row .ui-field {
+  padding-inline-start: 48px;
+}
+
+.content-composer-error {
+  margin: 0 var(--openbot-space-6) var(--openbot-space-3);
+}
+
+.content-composer-footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--openbot-space-3);
+  border-top: 1px solid var(--openbot-border-strong);
+  background: var(--openbot-bg-canvas);
+  padding: var(--openbot-space-3) var(--openbot-space-6);
+}
+
+@container (max-width: 920px) {
+  .content-composer-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Accounts dialog. */
+.content-accounts {
+  display: grid;
+  width: min(560px, 100%);
+  max-height: calc(100dvh - 48px);
+  gap: var(--openbot-space-4);
+  overflow-y: auto;
+  background: var(--openbot-bg-sidebar);
+  padding: var(--openbot-space-6);
+  color: var(--openbot-text-primary);
+}
+
+.content-accounts-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--openbot-space-3);
+}
+
+.content-accounts-head h2 {
+  font-size: var(--openbot-text-lg);
+  font-weight: var(--openbot-weight-semibold);
+}
+
+.content-accounts-head p {
+  margin-top: var(--openbot-space-1);
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-sm);
+}
+
+.content-account[data-focus] {
+  background: var(--openbot-bg-control);
+}
+
+.content-account-app {
+  display: grid;
+  gap: var(--openbot-space-2);
+  margin-top: var(--openbot-space-2);
+}
+
+/* The calendar fills the page below the tabs and scrolls inside it. */
+.content-calendar {
+  padding: var(--openbot-space-3) var(--openbot-space-6) var(--openbot-space-6);
+}
+
+.content-calendar .routine-planner-toolbar {
+  padding: 0;
+}
+
+@media (min-width: 721px) {
+  /* The title goes in the top row after the server menu, as the schedule title does. The rail is the way
+   * back, so the title has no host name there. */
+  .app-frame-edge[data-window-page-kind="titled"] > .window-page > .content-page {
+    grid-template-rows: var(--left-header-height) minmax(0, 1fr);
+    background: transparent;
+  }
+
+  .app-frame-edge[data-window-page-kind="titled"] > .window-page > .content-page > .content-page-title {
+    padding: 0 var(--openbot-space-3);
+    margin-inline-start: var(--left-panel-width);
+    pointer-events: auto;
+    -webkit-app-region: drag;
+  }
+
+  .app-frame-edge[data-window-page-kind="titled"] > .window-page .content-page-title h2 {
+    font-size: var(--openbot-text-md);
+    font-weight: var(--openbot-weight-medium);
+  }
+
+  .app-frame-edge[data-window-page-kind="titled"] > .window-page .content-page-title h2 > span {
+    display: none;
+  }
+
+  .app-frame-edge[data-window-page-kind="titled"] > .window-page > .content-page > .content-page-body {
+    pointer-events: auto;
+  }
+}

@@ -12,6 +12,7 @@ import { AgentReadTrackingProvider } from "./features/agents/agent-read-tracking
 import { AgentsProvider } from "./features/agents/agents-context";
 import { BrowserTabsProvider } from "./features/browser/browser-context";
 import { ChannelsProvider } from "./features/channels/channels-context";
+import { ContentProvider } from "./features/content/content-context";
 import { readStoredComposerDrafts } from "./features/conversation/composer-draft-storage";
 import { ConversationProvider } from "./features/conversation/conversation-context";
 import {
@@ -122,15 +123,17 @@ export function AppProviders(props: ParentProps<AppProps>): JSX.Element {
                                       <UiErrorsProvider>
                                         <UsageProvider>
                                           <WindowPageProvider>
-                                            <AgentReadTrackingProvider>
-                                              {/* Links and invitations open in the main window. */}
-                                              <Show when={!props.chatWindow}>
-                                                <AppBootstrap />
-                                              </Show>
-                                              <ServerScopeBoundary stableConversation={stableConversation}>
-                                                {props.children}
-                                              </ServerScopeBoundary>
-                                            </AgentReadTrackingProvider>
+                                            <ContentProvider>
+                                              <AgentReadTrackingProvider>
+                                                {/* Links and invitations open in the main window. */}
+                                                <Show when={!props.chatWindow}>
+                                                  <AppBootstrap />
+                                                </Show>
+                                                <ServerScopeBoundary stableConversation={stableConversation}>
+                                                  {props.children}
+                                                </ServerScopeBoundary>
+                                              </AgentReadTrackingProvider>
+                                            </ContentProvider>
                                           </WindowPageProvider>
                                         </UsageProvider>
                                       </UiErrorsProvider>

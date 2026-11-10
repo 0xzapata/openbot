@@ -1,0 +1,225 @@
+/* The shared parts of the content manager: network chips, the character count, the media field, the empty
+ * state and the post calendar. The calendar wears the `routine-planner-*` rules of routine-calendar.css;
+ * this file adds only what a post has and a run does not. Token values are copied, not imported. */
+
+/* Network chip. The skipped look is the paused run of routine-calendar.css. */
+.content-chip,
+.content-chip.ui-button {
+  display: inline-flex;
+  height: calc(var(--openbot-space-4) + var(--openbot-space-1));
+  min-width: 22px;
+  align-items: center;
+  justify-content: center;
+  gap: var(--openbot-space-0-5);
+  border: 0;
+  border-radius: var(--openbot-radius-sm);
+  background: var(--openbot-bg-control-active);
+  padding: 0 var(--openbot-space-1);
+  color: var(--openbot-text-secondary);
+}
+
+.content-chip svg {
+  width: var(--openbot-icon-xs);
+  height: var(--openbot-icon-xs);
+}
+
+.content-chip .content-chip-glyph {
+  stroke-width: 2.5;
+}
+
+.content-chip[data-status="skipped"] {
+  outline: 1px dashed var(--openbot-border-grouped);
+  outline-offset: -1px;
+  background: var(--openbot-transparent);
+  opacity: 0.6;
+}
+
+.content-chip[data-status="publishing"] {
+  background: var(--openbot-accent-soft);
+  color: var(--openbot-accent-text);
+}
+
+.content-chip[data-status="published"] {
+  background: var(--openbot-success-soft);
+  color: var(--openbot-success);
+}
+
+.content-chip[data-status="failed"] {
+  background: var(--openbot-danger-soft);
+  color: var(--openbot-danger-text);
+}
+
+/* Character count: a small ring and its line. */
+.content-count {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--openbot-space-1-5);
+  white-space: nowrap;
+}
+
+.content-count .content-count-ring {
+  width: var(--openbot-icon-sm);
+}
+
+/* Empty state. Spacing from .routine-planner-empty-pitch. */
+.content-empty {
+  display: grid;
+  max-width: 34rem;
+  justify-items: center;
+  gap: var(--openbot-space-4);
+  margin: 0 auto;
+  padding: var(--openbot-space-6);
+  text-align: center;
+}
+
+.content-empty h3 {
+  font-size: var(--openbot-text-3xl);
+  font-weight: var(--openbot-weight-semibold);
+}
+
+.content-empty p {
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-lg);
+  line-height: var(--openbot-leading-lg);
+}
+
+/* Media field: a drop zone, or the chosen file in the attachment look of the chat composer. */
+.content-media {
+  display: flex;
+  gap: var(--openbot-space-2);
+}
+
+.content-drop {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--openbot-space-2);
+  border: 1px dashed var(--openbot-border-grouped);
+  border-radius: var(--openbot-radius-lg);
+  padding: var(--openbot-space-6);
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-sm);
+}
+
+.content-drop[data-over] {
+  border-color: var(--openbot-accent);
+  background: var(--openbot-accent-soft);
+}
+
+.content-drop .content-drop-icon {
+  width: var(--openbot-icon-lg);
+  height: var(--openbot-icon-lg);
+  stroke-width: 1.5;
+}
+
+.content-attachment {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--openbot-space-2);
+  border: 1px solid var(--openbot-border-strong);
+  border-radius: var(--openbot-radius-lg);
+  background: var(--openbot-bg-surface);
+  padding: var(--openbot-space-1-5);
+  padding-inline-end: var(--openbot-space-2);
+}
+
+.content-attachment .ui-image-remove-button {
+  position: static;
+}
+
+.content-thumb {
+  display: grid;
+  width: calc(var(--openbot-space-8) + var(--openbot-space-2));
+  height: calc(var(--openbot-space-8) + var(--openbot-space-2));
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--openbot-radius-md);
+  background: var(--openbot-accent-soft);
+  color: var(--openbot-accent-text);
+}
+
+.content-thumb svg {
+  width: var(--openbot-icon-md);
+  height: var(--openbot-icon-md);
+}
+
+.content-attachment-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.content-attachment-copy strong {
+  overflow: hidden;
+  font-size: var(--openbot-text-md);
+  font-weight: var(--openbot-weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.content-attachment-copy small {
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-sm);
+}
+
+/* Post calendar: network marks take the avatars slot of a run, and the post states that a run has not. */
+/* A narrow day keeps the time whole; the marks that do not fit are cut at the end. */
+.post-calendar-marks {
+  min-width: 0;
+  justify-content: flex-end;
+  gap: 3px;
+  overflow: hidden;
+  color: var(--openbot-text-muted);
+}
+
+/* A 12-hour time is wider than a 24-hour one, so the marks go to the end of their own track. */
+.post-calendar .routine-planner-run.ui-button {
+  grid-template-columns: auto auto minmax(0, 1fr);
+}
+
+.post-calendar .routine-planner-run-time {
+  white-space: nowrap;
+}
+
+.post-calendar-marks svg {
+  width: 10px;
+  height: 10px;
+}
+
+.post-calendar-empty {
+  display: flex;
+  align-items: center;
+  gap: var(--openbot-space-3);
+}
+
+.routine-planner-status[data-status="pending"] .routine-planner-status-dot,
+.routine-planner-status[data-status="draft"] .routine-planner-status-dot {
+  background: var(--openbot-text-muted);
+}
+
+.routine-planner-status[data-status="published"] {
+  color: var(--openbot-success-text);
+}
+
+.routine-planner-status[data-status="publishing"] {
+  color: var(--openbot-accent-text);
+}
+
+.routine-planner-run[data-status="pending"],
+.routine-planner-entry[data-status="pending"],
+.routine-planner-run[data-status="draft"] {
+  opacity: 0.6;
+}
+
+.routine-planner-run[data-status="pending"],
+.routine-planner-run[data-status="draft"] {
+  outline: 1px dashed var(--openbot-border-grouped);
+  outline-offset: -1px;
+  background: var(--openbot-transparent);
+}
+
+.routine-planner-run[data-status="published"] .routine-planner-run-name {
+  color: var(--openbot-text-muted);
+}

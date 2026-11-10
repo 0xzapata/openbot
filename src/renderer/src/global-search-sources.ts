@@ -1,4 +1,15 @@
-import { BookMarked, Bot, CalendarClock, Hash, Server, Sparkles, Store, UsersRound } from "@openbot/ui";
+import {
+  BookMarked,
+  Bot,
+  CalendarClock,
+  Hash,
+  Megaphone,
+  Plus,
+  Server,
+  Sparkles,
+  Store,
+  UsersRound,
+} from "@openbot/ui";
 import type {
   GlobalSearchAction,
   GlobalSearchFile,
@@ -12,6 +23,7 @@ import { appPort } from "./app-port";
 import { useAgents } from "./features/agents/agents-context";
 import { useChannels } from "./features/channels/channels-context";
 import { globalSearchChannels } from "./features/channels/global-search-channels";
+import { useContent } from "./features/content/content-context";
 import { activeServerHasProviderSettings, serverCanAdminister } from "./features/servers/server-capabilities";
 import { useServerSettings } from "./features/servers/server-settings";
 import { useServers } from "./features/servers/servers-context";
@@ -37,7 +49,8 @@ export function useGlobalSearchSources(open: () => boolean) {
   const { activeServer } = useServers();
   const { openServerSettings } = useServerSettings();
   const { openAppSettings, setSkillsMarketplaceOpen } = useSettings();
-  const { openSchedule } = useUsage();
+  const { openSchedule, openContent } = useUsage();
+  const content = useContent();
   const [routines, setRoutines] = createSignal<GlobalSearchRoutine[]>([]);
   const [routinesLoading, setRoutinesLoading] = createSignal(false);
   let routineRequest = 0;
@@ -147,6 +160,34 @@ export function useGlobalSearchSources(open: () => boolean) {
           icon: CalendarClock,
           run: () => openSchedule(server.id, globalSearchOpener()),
         });
+      }
+      // Content is local only.
+      if (server?.kind === "local") {
+        list.push(
+          {
+            id: "content",
+            label: t("content.open"),
+            group: "actions",
+            icon: Megaphone,
+            keywords: t("content.palette.keywords"),
+            run: () => {
+              content.closeComposer();
+              content.setPane("queue");
+              openContent(server.id, globalSearchOpener());
+            },
+          },
+          {
+            id: "content-new-post",
+            label: t("content.action.new"),
+            group: "actions",
+            icon: Plus,
+            keywords: t("content.palette.keywords"),
+            run: () => {
+              content.openComposer(null);
+              openContent(server.id, globalSearchOpener());
+            },
+          },
+        );
       }
       for (const item of navItems) {
         // Hosted servers shows only for an account with hosting, which the dialog checks when it opens.

@@ -8,6 +8,7 @@ import {
   Ellipsis,
   GalleryVerticalEnd,
   ListChecks,
+  Megaphone,
   MotionTooltip,
   Pin,
   Settings,
@@ -176,6 +177,7 @@ export type PageRailPage =
   | "workflows"
   | "tasks"
   | "schedule"
+  | "content"
   | "usage"
   | "library"
   | "marketplace"
@@ -187,6 +189,7 @@ export const PAGE_RAIL_PINNABLE_PAGES = [
   "workflows",
   "tasks",
   "schedule",
+  "content",
   "usage",
   "library",
 ] as const satisfies readonly PageRailPage[];
@@ -212,6 +215,10 @@ export interface PageRailProps {
   onTasks?: ((button: HTMLElement) => void) | undefined;
   /** Absent where there is no schedule page. */
   onSchedule?: ((button: HTMLElement) => void) | undefined;
+  /** Absent where there is no Content page, such as a joined server. */
+  onContent?: ((button: HTMLElement) => void) | undefined;
+  /** What the Content page holds for the user, such as posts to approve. A dot marks it. */
+  contentNotice?: string | undefined;
   onUsage: (button: HTMLElement) => void;
   /** Absent where the server keeps no files, such as the web client. */
   onLibrary?: ((button: HTMLElement) => void) | undefined;
@@ -235,6 +242,8 @@ interface RailPage {
   label: string;
   icon: typeof Bot;
   open: (button: HTMLElement) => void;
+  /** A notice for the page. A dot marks its rail button. */
+  notice?: string | undefined;
 }
 
 /**
@@ -380,6 +389,16 @@ export function PageRail(props: PageRailProps) {
         open: onSchedule,
       });
     }
+    const onContent = props.onContent;
+    if (onContent) {
+      list.push({
+        id: "content",
+        label: t("app.rail.content"),
+        icon: Megaphone,
+        open: onContent,
+        notice: props.contentNotice,
+      });
+    }
     list.push({ id: "usage", label: t("app.rail.usage"), icon: ChartArea, open: props.onUsage });
     const onLibrary = props.onLibrary;
     if (onLibrary) {
@@ -396,8 +415,19 @@ export function PageRail(props: PageRailProps) {
         </RailButton>
         <For each={pages().filter((page) => props.pinned.includes(page.id))} keyed={(page) => page.id}>
           {(page) => (
-            <RailButton label={page().label} current={props.current === page().id} onClick={page().open}>
+            <RailButton
+              label={
+                page().notice
+                  ? t("app.rail.pageNotice", { name: page().label, notice: page().notice ?? "" })
+                  : page().label
+              }
+              current={props.current === page().id}
+              onClick={page().open}
+            >
               <Dynamic component={page().icon} aria-hidden="true" />
+              <Show when={page().notice}>
+                <span class="window-rail-notice" aria-hidden="true" />
+              </Show>
             </RailButton>
           )}
         </For>

@@ -73,6 +73,9 @@ export const WorkflowsPage = lazy(() =>
 export const ScheduleView = lazy(() =>
   import("./features/schedule/SchedulePanel").then((module) => ({ default: module.ScheduleView })),
 );
+export const ContentPanel = lazy(() =>
+  import("./features/content/ContentPanel").then((module) => ({ default: module.ContentPanel })),
+);
 export const TasksView = lazy(() =>
   import("./features/tasks/TasksView").then((module) => ({ default: module.TasksView })),
 );

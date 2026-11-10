@@ -7,6 +7,7 @@ import { appPort } from "../../app-port";
 import { useLayout } from "../../layout";
 import { usePlatform } from "../../platform";
 import { useChannels } from "../channels/channels-context";
+import { useContent } from "../content/content-context";
 import { useCustomAgents } from "../custom-agents/custom-agents-context";
 import { serverHasStorage } from "../files/storage-usage";
 import { serverSupportsCapability } from "../servers/server-capabilities";
@@ -32,6 +33,7 @@ export function WorkspacePageRail(props: { hidden: boolean }) {
   const whatsNew = useWhatsNew();
   const { activeServer } = useServers();
   const platform = usePlatform();
+  const content = useContent();
   /** macOS draws the window buttons in the top row of the rail. Windows and Linux show the logo there. */
   const logo = () => {
     const info = platform.appInfo();
@@ -77,6 +79,9 @@ export function WorkspacePageRail(props: { hidden: boolean }) {
       // A joined server without workflows shows its notice on the page.
       onWorkflows={() => windowPage.openWorkflows(null)}
       onSchedule={windowPage.openSchedule}
+      // Content is local only, so a joined server has no Content page.
+      onContent={activeServer()?.kind === "local" ? windowPage.openContent : undefined}
+      contentNotice={content.needsYou() > 0 ? text.t("content.rail.notice", { count: content.needsYou() }) : undefined}
       onTasks={tasksAvailable() ? windowPage.openTasks : undefined}
       onUsage={windowPage.openUsage}
       // An older joined server has no storage routes, so it has no Library.
