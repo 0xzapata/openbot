@@ -12,10 +12,12 @@
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import {
+  type ContentHostedHost,
   type ContentMedia,
   type ContentPlatform,
   type ContentVariantIssue,
   contentVariantIssues,
+  sameContentHostedHost,
 } from "@openbot/contracts/ipc-content";
 import { sourceText } from "@openbot/i18n/source";
 import { createOpenBotLogger } from "@openbot/logging";
@@ -115,7 +117,8 @@ export class ContentPublisher implements RoutineDueSource {
 
   /**
    * Removes the image host object of each variant that the network is done with: published, failed, or
-   * any status but `publishing`. A failed removal does not change the post: the key stays recorded and the
+   * any status but `publishing`. Only the set-up host of the key's own bucket removes it, so a 404 means
+   * that the object is gone. A failed removal does not change the post: the key stays recorded and the
    * next startup tries again. All variants at startup, or one after its publish step.
    */
   releaseHostedMedia(variantId: string | null = null): Effect.Effect<void> {
@@ -123,7 +126,7 @@ export class ContentPublisher implements RoutineDueSource {
       const keys = yield* Effect.try(() => this.#store.hostedKeysToRemove(variantId)).pipe(
         Effect.orElseSucceed(() => []),
       );
-      for (const { variantId: id, key } of keys) {
+      for (const { variantId: id, key, host: keyHost } of keys) {
         // The object name is not a secret: it is random and names nothing of the user. The log field is
         // `object`, because the logger hides a field named `key`.
         if (!isContentHostedKey(key)) {
@@ -135,23 +138,31 @@ export class ContentPublisher implements RoutineDueSource {
           yield* Effect.try(() => this.#store.clearHostedKey(id, key)).pipe(Effect.ignore);
           continue;
         }
+        // No host, a host of another bucket, or a key with no bucket: no request, and the key stays.
         const host = this.#accounts.mediaHost();
-        const removed = host
-          ? yield* host.remove(key).pipe(
-              Effect.as(true),
-              Effect.catch((error) =>
-                Effect.sync(() => {
-                  logger.warn("An image host object could not be removed.", {
-                    variantId: id,
-                    object: key,
-                    cause: error.message,
-                  });
-                  return false;
-                }),
-              ),
-            )
-          : false;
-        if (!host) logger.warn("An image host object waits for a host to be set up.", { variantId: id, object: key });
+        const hostBucket = this.#accounts.mediaHostBucket();
+        if (!host || !sameContentHostedHost(keyHost, hostBucket)) {
+          logger.warn("An image host object waits for a host of its bucket to be set up.", {
+            variantId: id,
+            object: key,
+            bucket: bucketName(keyHost),
+            hostBucket: bucketName(hostBucket),
+          });
+          continue;
+        }
+        const removed = yield* host.remove(key).pipe(
+          Effect.as(true),
+          Effect.catch((error) =>
+            Effect.sync(() => {
+              logger.warn("An image host object could not be removed.", {
+                variantId: id,
+                object: key,
+                cause: error.message,
+              });
+              return false;
+            }),
+          ),
+        );
         if (removed) yield* Effect.try(() => this.#store.clearHostedKey(id, key)).pipe(Effect.ignore);
       }
     });
@@ -181,11 +192,12 @@ export class ContentPublisher implements RoutineDueSource {
     yield* this.releaseHostedMedia(variant.id);
     if (!this.#store.claimVariant(variant.id, account?.id ?? null, this.#now())) return;
     // The removal failed again: no second object is made while the first one stays.
-    if (this.#store.hostedKey(variant.id))
+    const kept = this.#store.hostedKey(variant.id);
+    if (kept)
       return this.#finish(variant.id, {
         kind: "failed",
         code: "server",
-        message: sourceText("error.content.mediaHostCleanup"),
+        message: this.#accounts.hostedCleanupText(kept.host),
       });
 
     // Decision B: Instagram with no image host fails at its time, before any request. Retry works after setup.
@@ -236,7 +248,8 @@ export class ContentPublisher implements RoutineDueSource {
    */
   #hostImage(variantId: string, platform: ContentPlatform): ContentHostImage | null {
     const host = this.#accounts.mediaHost();
-    if (!host || (platform !== "instagram" && platform !== "threads")) return null;
+    const bucket = this.#accounts.mediaHostBucket();
+    if (!host || !bucket || (platform !== "instagram" && platform !== "threads")) return null;
     // One upload per publish: a second call after a token refresh gets the same URL.
     let uploaded: { url: string } | null = null;
     return (media) =>
@@ -249,7 +262,7 @@ export class ContentPublisher implements RoutineDueSource {
             status: null,
             message: sourceText("error.content.mediaType"),
           });
-        this.#store.setHostedKey(variantId, key, this.#now());
+        this.#store.setHostedKey(variantId, key, bucket, this.#now());
         uploaded = yield* host.put({ bytes: media.bytes, mimeType: media.mimeType }, key);
         return uploaded;
       });
@@ -331,6 +344,11 @@ export class ContentPublisher implements RoutineDueSource {
     };
     return file;
   });
+}
+
+/** The bucket of a log line. The bucket and endpoint host are not secret. */
+function bucketName(host: ContentHostedHost | null): string | null {
+  return host ? `${host.bucket} ${host.endpointHost}` : null;
 }
 
 function signedOut(platform: ContentPlatform): Extract<ContentVariantOutcome, { kind: "failed" }> {

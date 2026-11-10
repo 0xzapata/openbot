@@ -285,6 +285,38 @@ export interface ContentMediaHostView {
   bucket: string;
   publicBaseUrl: string;
   hasKeys: boolean;
+  /** One item per bucket that still has recorded image keys. Keys with no recorded bucket are not here. */
+  leftover: ContentHostedBucket[];
+}
+
+/** Where a hosted image lives: the endpoint's host name in lower case, and the bucket. Never a key or secret. */
+export interface ContentHostedHost {
+  endpointHost: string;
+  bucket: string;
+}
+
+export interface ContentHostedBucket extends ContentHostedHost {
+  count: number;
+}
+
+/** The `{ endpointHost, bucket }` of image host settings, so that every place agrees on it. */
+export function contentHostedHost(settings: { endpoint: string; bucket: string }): ContentHostedHost {
+  return { endpointHost: new URL(settings.endpoint).hostname.toLowerCase(), bucket: settings.bucket };
+}
+
+export function sameContentHostedHost(a: ContentHostedHost | null, b: ContentHostedHost | null): boolean {
+  return a !== null && b !== null && a.endpointHost === b.endpointHost && a.bucket === b.bucket;
+}
+
+/**
+ * The endpoint host as the user sees it: its first label cut to 8 characters plus "…" when it is
+ * longer, then the rest of the domain. The account id is long, and not useful in full.
+ */
+export function contentShortHost(endpointHost: string): string {
+  const dot = endpointHost.indexOf(".");
+  const first = dot < 0 ? endpointHost : endpointHost.slice(0, dot);
+  const rest = dot < 0 ? "" : endpointHost.slice(dot);
+  return `${first.length > 8 ? `${first.slice(0, 8)}…` : first}${rest}`;
 }
 
 export interface ContentAccountsState {
@@ -361,6 +393,11 @@ export interface ContentPublishNowInput {
 
 export interface ContentDeletePostInput {
   postId: string;
+  /**
+   * Deletes the post and leaves its hosted image, when no set-up host can remove it. Ignored while the
+   * set-up host is the image's bucket. Only the user sends it.
+   */
+  leaveHostedMedia?: true;
 }
 
 export interface ContentCalendarInput {
@@ -536,12 +573,20 @@ export function isContentNetworkView(value: unknown): value is ContentNetworkVie
 
 export function isContentMediaHostView(value: unknown): value is ContentMediaHostView {
   return (
-    hasKeys(value, ["configured", "endpoint", "bucket", "publicBaseUrl", "hasKeys"]) &&
+    hasKeys(value, ["configured", "endpoint", "bucket", "publicBaseUrl", "hasKeys", "leftover"]) &&
     isBoolean(value.configured) &&
     isString(value.endpoint) &&
     isString(value.bucket) &&
     isString(value.publicBaseUrl) &&
-    isBoolean(value.hasKeys)
+    isBoolean(value.hasKeys) &&
+    Array.isArray(value.leftover) &&
+    value.leftover.every(
+      (item) =>
+        hasKeys(item, ["count", "endpointHost", "bucket"]) &&
+        isNumber(item.count) &&
+        isString(item.endpointHost) &&
+        isString(item.bucket),
+    )
   );
 }
 

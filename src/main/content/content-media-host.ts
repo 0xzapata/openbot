@@ -52,7 +52,7 @@ export function contentHostedKey(mimeType: string): string | null {
   return extension ? `t/${randomBytes(16).toString("hex")}.${extension}` : null;
 }
 
-export const CONTENT_MEDIA_HOST_PROBE_FAILURES = ["upload", "public", "bytes"] as const;
+export const CONTENT_MEDIA_HOST_PROBE_FAILURES = ["upload", "public", "bytes", "delete"] as const;
 
 /** The save-time check failed. `message` tells the user what to change. */
 export class ContentMediaHostError extends Schema.TaggedError<ContentMediaHostError>()("ContentMediaHostError", {
@@ -66,7 +66,7 @@ export interface ContentMediaHost {
     key: string,
   ): Effect.Effect<{ url: string }, ContentAdapterError>;
   remove(key: string): Effect.Effect<void, ContentAdapterError>;
-  /** Puts a small file, reads it back over the public URL, and removes it. */
+  /** Puts a small file, reads it back over the public URL, and removes it. A failed removal fails it. */
   probe(): Effect.Effect<void, ContentMediaHostError>;
 }
 
@@ -215,6 +215,7 @@ export class R2MediaHost implements ContentMediaHost {
     const id = randomBytes(16).toString("hex");
     const key = `t/probe-${id}.txt`;
     const bytes = new TextEncoder().encode(`OpenBot image host check ${id}\n`);
+    let deleteTried = false;
     const check = Effect.gen({ self: this }, function* () {
       const put = yield* this.#request("PUT", key, bytes, "text/plain").pipe(Effect.result);
       if (put._tag === "Failure" || !put.success.ok)
@@ -243,10 +244,28 @@ export class R2MediaHost implements ContentMediaHost {
           reason: "bytes",
           message: sourceText("error.content.mediaHostBytesDiffer"),
         });
+      // Keys that can write but not delete would pass, and then no image could be removed.
+      deleteTried = true;
+      yield* this.remove(key).pipe(
+        Effect.tapError((error) =>
+          Effect.sync(() =>
+            logger.warn("An image host probe file could not be removed.", { object: key, cause: error.message }),
+          ),
+        ),
+        Effect.mapError(
+          (error) =>
+            new ContentMediaHostError({
+              reason: "delete",
+              message: sourceText("error.content.mediaHostDeleteRefused", {
+                status: error.status === null ? "no answer" : String(error.status),
+              }),
+            }),
+        ),
+      );
     });
-    // Removed on success, on failure and after a stop. A failed upload made no object, so its DELETE finds
-    // none. A failed DELETE leaves the probe file in the bucket: the log names it. The field is `object`,
-    // because the logger hides a field named `key`.
+    // A check that failed before its own DELETE, or was stopped, still removes the probe file. A failed
+    // upload made no object, so its DELETE finds none. This DELETE's failure is only logged: the check
+    // already failed, or the user ended it. The field is `object`, because the logger hides `key`.
     const removeProbe = this.remove(key).pipe(
       Effect.catch((error) =>
         Effect.sync(() =>
@@ -260,7 +279,9 @@ export class R2MediaHost implements ContentMediaHost {
       Effect.onExit((exit) =>
         Exit.hasInterrupts(exit)
           ? Effect.asVoid(Effect.forkDetach(removeProbe, { startImmediately: true }))
-          : removeProbe,
+          : deleteTried
+            ? Effect.void
+            : removeProbe,
       ),
     );
   });

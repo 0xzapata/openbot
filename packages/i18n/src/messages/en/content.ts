@@ -104,6 +104,10 @@ export const messages = defineMessages("content", {
   "content.confirm.needsHost.bodyOnly":
     "It needs an image host, and it is the only network of this post. Set up the image host, then schedule the post.",
   "content.confirm.needsHost.action": "Schedule without Instagram",
+  "content.confirm.keepImage.title": "Delete the post and leave its image?",
+  "content.confirm.keepImage.body":
+    "OpenBot cannot remove the image without an image host for {bucket}, so it stays public. Delete it yourself: in {bucket}, the t/ folder.",
+  "content.confirm.keepImage.action": "Delete and leave the image",
 
   // Banners and errors
   "content.banner.signedOut": "{network} signed you out. Sign in again, or posts for {handle} fail at their time.",
@@ -225,6 +229,12 @@ export const messages = defineMessages("content", {
   "content.accounts.mediaHost.needed": "Needed for Instagram, and for Threads posts with an image",
   "content.accounts.mediaHost.checking": "Checking the image host…",
   "content.accounts.mediaHost.cancelled": "Not saved. The check was stopped.",
+  "content.accounts.mediaHost.leftover": {
+    one: "{count} image waits to be removed from {bucket}. Keep this bucket until it is gone.",
+    other: "{count} images wait to be removed from {bucket}. Keep this bucket until they are gone.",
+  },
+  // A bucket with its endpoint host, as "dev-assets-bucket on 40392de4….r2.cloudflarestorage.com".
+  "content.accounts.mediaHost.bucketOn": "{bucket} on {host}",
   "content.accounts.mediaHost.endpoint": "R2 endpoint",
   "content.accounts.mediaHost.bucket": "Bucket",
   "content.accounts.mediaHost.publicBaseUrl": "Public base URL",

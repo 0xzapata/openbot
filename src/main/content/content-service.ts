@@ -19,6 +19,7 @@ import {
   type ContentCalendarInput,
   type ContentCancelConnectInput,
   type ContentCreatePostInput,
+  type ContentDeletePostInput,
   type ContentDisconnectInput,
   type ContentListPostsInput,
   type ContentMedia,
@@ -30,9 +31,12 @@ import {
   type ContentPostView,
   type ContentSaveVariantInput,
   type ContentUpdatePostInput,
+  contentHostedHost,
   contentPostStatus,
+  sameContentHostedHost,
 } from "@openbot/contracts/ipc-content";
 import { sourceText } from "@openbot/i18n/source";
+import { createOpenBotLogger } from "@openbot/logging";
 import { Effect, Result, Schema } from "effect";
 import { localTimezone } from "../../backend/agent/routine-tools";
 import { attachmentCall } from "../../backend/attachment-effects";
@@ -51,7 +55,9 @@ import {
   type ContentVariantInput,
 } from "../../backend/content/content-store";
 import type { MailboxStore } from "../../backend/mailbox-store";
-import { ContentAccountError, type ContentAccounts } from "./content-accounts";
+import { ContentAccountError, type ContentAccounts, contentBucketLabel } from "./content-accounts";
+
+const logger = createOpenBotLogger("content-service");
 
 /** A refused or failed user operation. `cause` is the Error that the renderer gets: `sourceText` English. */
 export class ContentRequestFailed extends Schema.TaggedError<ContentRequestFailed>()("ContentRequestFailed", {
@@ -247,14 +253,23 @@ export class ContentService {
     this: ContentService,
     input: ContentMediaHostInput,
   ) {
-    // A recorded key does not name its bucket, so its object is removed from the current host before the
-    // host changes. While one stays, nothing is saved: the new host would never find that object.
-    if (this.#accounts.mediaHost()) {
-      yield* this.#releaseHostedMedia(null);
-      if (yield* storeCall(() => this.#store.hasHostedKeys()))
-        return yield* refuse(sourceText("error.content.mediaHostCleanup"));
-    }
+    // Only a host of a key's own bucket can remove it. So the save is refused while a key of another
+    // bucket, or of no recorded bucket, stays: that bucket would have no host. The same endpoint host and
+    // bucket is always allowed, also with new keys or a new public base URL: that fixes revoked keys.
+    const next = contentHostedHost(input);
+    const buckets = yield* storeCall(() => this.#store.hostedBuckets());
+    // A named bucket first: a key with no recorded bucket has no name to show.
+    const other =
+      buckets.find(({ host }) => host && !sameContentHostedHost(host, next)) ??
+      buckets.find(({ host }) => !sameContentHostedHost(host, next));
+    if (other)
+      return yield* refuse(
+        sourceText("error.content.mediaHostCleanupNeedsHost", { bucket: contentBucketLabel(other.host) }),
+      );
     yield* this.#accounts.saveMediaHost(input).pipe(Effect.mapError(failure));
+    // The check proved that the new keys can delete. A removal that fails here does not fail the save: the
+    // keys stay, and the next start and the next delete try again.
+    if (buckets.length > 0) yield* this.#releaseHostedMedia(null);
     return yield* this.listAccounts();
   });
 
@@ -366,13 +381,41 @@ export class ContentService {
 
   /**
    * Removes the image host objects of the post first: the store refuses the delete while a key is recorded,
-   * because the variant row is the only record of that public object.
+   * because the variant row is the only record of that public object. The store keeps its own refusal,
+   * and this turns it into the text of the kept key (`ContentAccounts.hostedCleanupText`).
+   *
+   * `leaveHostedMedia` counts only when no set-up host can remove a kept key: no host, a host of another
+   * bucket, or a key with no bucket. Then the post and its keys go, with no request, and the log names
+   * each object. While the set-up host is the key's bucket, it changes nothing.
    */
-  readonly deletePost = Effect.fn("ContentService.deletePost")(function* (this: ContentService, postId: string) {
+  readonly deletePost = Effect.fn("ContentService.deletePost")(function* (
+    this: ContentService,
+    input: ContentDeletePostInput,
+  ) {
+    const { postId } = input;
     const post = yield* storeCall(() => this.#store.readPost(postId));
-    for (const variant of post?.variants ?? [])
-      if (this.#store.hostedKey(variant.id)) yield* this.#releaseHostedMedia(variant.id);
-    yield* storeCall(() => this.#store.deletePost(postId));
+    const variants = post?.variants ?? [];
+    for (const variant of variants) if (this.#store.hostedKey(variant.id)) yield* this.#releaseHostedMedia(variant.id);
+    const kept = variants.flatMap((variant) => {
+      const record = this.#store.hostedKey(variant.id);
+      return record ? [{ variantId: variant.id, ...record }] : [];
+    });
+    // The store refuses an unknown or publishing post first, with its own text.
+    if (kept.length === 0 || variants.some((variant) => variant.status === "publishing"))
+      return yield* storeCall(() => this.#store.deletePost(postId));
+    const hostBucket = this.#accounts.mediaHostBucket();
+    // A key that the set-up host can reach, but could not remove: the next try can work, so no flag helps.
+    const reachable = kept.find(({ host }) => sameContentHostedHost(host, hostBucket));
+    if (reachable) return yield* refuse(this.#accounts.hostedCleanupText(reachable.host));
+    if (!input.leaveHostedMedia)
+      return yield* refuse(this.#accounts.hostedCleanupText((kept.find(({ host }) => host) ?? kept[0])?.host ?? null));
+    yield* storeCall(() => this.#store.deletePost(postId, true));
+    for (const { variantId, key, host } of kept)
+      logger.warn("A post was deleted and its image left on the image host.", {
+        variantId,
+        object: key,
+        bucket: host ? `${host.bucket} ${host.endpointHost}` : null,
+      });
   });
 
   readonly schedulePost = Effect.fn("ContentService.schedulePost")(function* (

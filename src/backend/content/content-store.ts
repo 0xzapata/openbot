@@ -10,6 +10,7 @@ import {
   CONTENT_VARIANT_STATUSES,
   type ContentApprovalState,
   type ContentChangedEvent,
+  type ContentHostedHost,
   type ContentMedia,
   type ContentPendingReason,
   type ContentPlatform,
@@ -337,7 +338,7 @@ export class ContentStore {
    * Refused while a network posts it: the request may still need its file. Refused while a variant still
    * records an image host key: the key is the only record of that public object.
    */
-  deletePost(postId: string): void {
+  deletePost(postId: string, leaveHostedMedia = false): void {
     let files: string[] = [];
     this.#database.dispatch(
       `content:content-post.deleted:${randomUUID()}`,
@@ -347,7 +348,10 @@ export class ContentStore {
         if (!post) throw new ContentStateError(sourceText("error.content.unknownPost"));
         if (post.variants.some((variant) => variant.status === "publishing"))
           throw new ContentStateError(sourceText("error.content.publishing"));
-        if (this.hasHostedKeys(postId)) throw new ContentStateError(sourceText("error.content.mediaHostCleanup"));
+        // `leaveHostedMedia`: the service found that no set-up host can remove the keys, and the user chose
+        // to leave the images. The keys go with the rows.
+        if (!leaveHostedMedia && this.hasHostedKeys(postId))
+          throw new ContentStateError(sourceText("error.content.mediaHostCleanup"));
         files = [post.media, ...post.variants.map((variant) => variant.media)].flatMap((media) =>
           media ? [media.file] : [],
         );
@@ -619,13 +623,13 @@ export class ContentStore {
 
   /**
    * The network still works on the post. The variant stays `publishing` until the next check. A recorded
-   * `hostedKey` stays in the new pending data.
+   * `hostedKey` and its `hostedHost` stay in the new pending data.
    */
   setPending(variantId: string, pendingData: string, now = new Date()): void {
     this.#variantWrite(variantId, "content-post.variant-pending", {}, (db, sequence) => {
       db.prepare(
         `UPDATE content_variants SET pending_data = CASE WHEN ${HOSTED_KEY} IS NULL THEN ?
-           ELSE json_set(?, '$.hostedKey', ${HOSTED_KEY}) END, updated_at = ?, last_event_sequence = ?
+           ELSE json_patch(?, ${HOSTED_RECORD}) END, updated_at = ?, last_event_sequence = ?
          WHERE variant_id = ? AND status = 'publishing'`,
       ).run(pendingData, pendingData, now.toISOString(), sequence, variantId);
     });
@@ -633,44 +637,56 @@ export class ContentStore {
 
   /**
    * Records the image host key before the upload, in the claimed `publishing` state, so that a crash after
-   * the upload leaves the key for the recovery. The variant has no `checkAt`, so it is not due.
+   * the upload leaves the key for the recovery. The variant has no `checkAt`, so it is not due. `host` is
+   * the bucket of the key: only a host of that bucket removes it.
    */
-  setHostedKey(variantId: string, key: string, now = new Date()): void {
+  setHostedKey(variantId: string, key: string, host: ContentHostedHost, now = new Date()): void {
     this.#variantWrite(variantId, "content-post.variant-hosted", {}, (db, sequence) => {
       db.prepare(
-        `UPDATE content_variants SET pending_data = json_object('hostedKey', ?), updated_at = ?, last_event_sequence = ?
+        `UPDATE content_variants SET pending_data = json_object('hostedKey', ?, 'hostedHost', json_object('endpointHost', ?, 'bucket', ?)),
+           updated_at = ?, last_event_sequence = ?
          WHERE variant_id = ? AND status = 'publishing'`,
-      ).run(key, now.toISOString(), sequence, variantId);
+      ).run(key, host.endpointHost, host.bucket, now.toISOString(), sequence, variantId);
     });
   }
 
-  /** The image host key that a variant recorded, in any status, or null. */
-  hostedKey(variantId: string): string | null {
+  /** The image host key that a variant recorded, with its bucket, in any status, or null. */
+  hostedKey(variantId: string): ContentHostedRecord | null {
     const row = databaseRow(
       this.#database.connection
-        .prepare(`SELECT ${HOSTED_KEY} AS hosted_key FROM content_variants WHERE variant_id = ?`)
+        .prepare(`SELECT ${HOSTED_COLUMNS} FROM content_variants WHERE variant_id = ? AND ${HOSTED_KEY} IS NOT NULL`)
         .get(variantId),
     );
-    return row ? optionalStringColumn(row, "hosted_key") : null;
+    return row ? hostedRecord(row) : null;
   }
 
   /**
    * The recorded image host keys whose variant is no longer `publishing`, so the network is done with the
    * object. All variants, or only `variantId`.
    */
-  hostedKeysToRemove(variantId: string | null = null): Array<{ variantId: string; key: string }> {
+  hostedKeysToRemove(variantId: string | null = null): Array<{ variantId: string } & ContentHostedRecord> {
     const rows = databaseRows(
       this.#database.connection
         .prepare(
-          `SELECT variant_id, ${HOSTED_KEY} AS hosted_key FROM content_variants
+          `SELECT variant_id, ${HOSTED_COLUMNS} FROM content_variants
            WHERE status != 'publishing' AND ${HOSTED_KEY} IS NOT NULL AND (? IS NULL OR variant_id = ?)`,
         )
         .all(variantId, variantId),
     );
-    return rows.map((row) => ({
-      variantId: requiredStringColumn(row, "variant_id"),
-      key: requiredStringColumn(row, "hosted_key"),
-    }));
+    return rows.map((row) => ({ variantId: requiredStringColumn(row, "variant_id"), ...hostedRecord(row) }));
+  }
+
+  /** The recorded image host keys of all variants, in any status, counted by bucket. `host` null: no bucket. */
+  hostedBuckets(): Array<{ count: number; host: ContentHostedHost | null }> {
+    const rows = databaseRows(
+      this.#database.connection
+        .prepare(
+          `SELECT ${HOSTED_COLUMNS}, COUNT(*) AS count FROM content_variants WHERE ${HOSTED_KEY} IS NOT NULL
+           GROUP BY hosted_endpoint, hosted_bucket ORDER BY hosted_bucket, hosted_endpoint`,
+        )
+        .all(),
+    );
+    return rows.map((row) => ({ count: requiredNumberColumn(row, "count"), host: hostedRecord(row).host }));
   }
 
   /** True when a variant, of the post `postId` or of any post, still records an image host key. */
@@ -1002,8 +1018,37 @@ class ClaimLost extends Error {}
 const VALID_PENDING = "CASE WHEN json_valid(pending_data) THEN pending_data END";
 /** The object key that a variant uploaded to the image host. */
 const HOSTED_KEY = `json_extract(${VALID_PENDING}, '$.hostedKey')`;
-/** The `pending_data` of a finished variant: only its hosted key, until main removes the object. */
-const KEEP_HOSTED_KEY = `CASE WHEN ${HOSTED_KEY} IS NULL THEN NULL ELSE json_object('hostedKey', ${HOSTED_KEY}) END`;
+/** The bucket of the key, `{ endpointHost, bucket }`, as JSON. */
+const HOSTED_HOST = `json_extract(${VALID_PENDING}, '$.hostedHost')`;
+/** The key and its bucket as one JSON object. `json_patch` drops a `hostedHost` that is NULL. */
+const HOSTED_RECORD = `json_patch('{}', json_object('hostedKey', ${HOSTED_KEY}, 'hostedHost', ${HOSTED_HOST}))`;
+/** The `pending_data` of a finished variant: only its hosted key and bucket, until main removes the object. */
+const KEEP_HOSTED_KEY = `CASE WHEN ${HOSTED_KEY} IS NULL THEN NULL ELSE ${HOSTED_RECORD} END`;
+const HOSTED_COLUMNS = `${HOSTED_KEY} AS hosted_key, json_extract(${VALID_PENDING}, '$.hostedHost.endpointHost') AS hosted_endpoint,
+  json_extract(${VALID_PENDING}, '$.hostedHost.bucket') AS hosted_bucket`;
+
+/** A recorded image host key and its bucket. */
+export interface ContentHostedRecord {
+  key: string;
+  /**
+   * Null when the key records no bucket. Such a key is of an unknown bucket: it is never tried, and only
+   * "delete and leave the image" clears it. The image host code has not shipped, so such a key exists
+   * only in a development profile.
+   */
+  host: ContentHostedHost | null;
+}
+
+function hostedRecord(row: DynamicRecord): ContentHostedRecord {
+  const endpointHost = row.hosted_endpoint;
+  const bucket = row.hosted_bucket;
+  return {
+    key: requiredStringColumn(row, "hosted_key"),
+    host:
+      typeof endpointHost === "string" && typeof bucket === "string" && endpointHost && bucket
+        ? { endpointHost, bucket }
+        : null,
+  };
+}
 
 /** The due time of a variant: the post time while queued, the next check while publishing. */
 const DUE_AT = `CASE v.status WHEN 'queued' THEN p.scheduled_for ELSE json_extract(v.pending_data, '$.checkAt') END`;

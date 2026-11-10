@@ -99,7 +99,11 @@ export const messages = defineMessages("error.content", {
   "error.content.mediaHostKeysMissing": "Give the access key ID and the secret access key of the image host.",
   "error.content.mediaHostSaveFailed": "OpenBot could not save the image host.",
   "error.content.mediaHostCleanup":
-    "OpenBot could not remove the image of the last attempt from the image host. Try again later.",
+    "OpenBot could not remove an earlier image from the image host, and it stays public until it is removed. Try again in a few minutes.",
+  "error.content.mediaHostCleanupNeedsHost":
+    "An image from an earlier attempt is still public in {bucket}, and OpenBot has no image host for that bucket now. Set up {bucket} again, and OpenBot removes the image.",
+  "error.content.mediaHostDeleteRefused":
+    "The image host did not let OpenBot delete its test file ({status}). Give an access key that can delete in this bucket.",
   "error.content.mediaHostTimeout":
     "The image host did not answer in 60 seconds. Check the endpoint and the public base URL.",
   "error.content.mediaHostCancelled": "The image host check was stopped.",

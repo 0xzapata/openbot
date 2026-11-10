@@ -18,9 +18,12 @@ import { join, resolve } from "node:path";
 import {
   CONTENT_PLATFORM_KEYS,
   CONTENT_REDIRECT_URI,
+  type ContentHostedHost,
   type ContentMedia,
   type ContentPlatform,
+  contentHostedHost,
   contentPostStatus,
+  contentShortHost,
 } from "@openbot/contracts/ipc-content";
 import { sourceText } from "@openbot/i18n/source";
 import { teeLogLines } from "@openbot/logging";
@@ -29,9 +32,9 @@ import { AgentStore } from "../src/backend/agent-store";
 import { type ContentPostInput, ContentStateError, ContentStore } from "../src/backend/content/content-store";
 import { runCauseEffect } from "../src/backend/effect-boundary";
 import { OpenBotDatabase } from "../src/backend/openbot-database";
-import { CONTENT_MEDIA_HOST_FILE, ContentAccounts } from "../src/main/content/content-accounts";
+import { CONTENT_MEDIA_HOST_FILE, ContentAccounts, contentBucketLabel } from "../src/main/content/content-accounts";
 import type { ContentFetch } from "../src/main/content/content-adapter";
-import { R2MediaHost } from "../src/main/content/content-media-host";
+import { contentHostedKey, R2MediaHost } from "../src/main/content/content-media-host";
 import { ContentPublisher } from "../src/main/content/content-publisher";
 import { ContentService, contentPostView } from "../src/main/content/content-service";
 import { escapeLinkedInCommentary, LINKEDIN_API_VERSION, LinkedInAdapter } from "../src/main/content/linkedin-adapter";
@@ -221,7 +224,7 @@ const cipher = {
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
 const logs: string[] = [];
-const stopLogs = teeLogLines(["content-publisher"], (line) => logs.push(line));
+const stopLogs = teeLogLines(["content-publisher", "content-service", "content-media-host"], (line) => logs.push(line));
 
 const root = await mkdtemp(join(tmpdir(), "openbot-content-publish-"));
 const database = new OpenBotDatabase(join(root, "state"));
@@ -960,6 +963,8 @@ try {
     const R2_SECRET = "test-r2-secret-access-key-0123456789";
     const bucket = new Map<string, Buffer>();
     let failDeletes = 0;
+    /** Access key ids whose DELETE gets 403, as a key with write and no delete right. */
+    const noDeleteKeys = new Set<string>();
     /** While set, a public GET answers only when this promise settles, or fails when its request is aborted. */
     let holdPublic: Promise<void> | null = null;
     /** The limit of an image host check in the next `build`. Unset: the 60 s default. */
@@ -988,6 +993,9 @@ try {
           failDeletes -= 1;
           return new Response(null, { status: 503 });
         }
+        // The access key id is in the SigV4 Credential of the Authorization header.
+        const keyId = /Credential=([^/]+)\//u.exec(new Headers(init.headers).get("authorization") ?? "")?.[1] ?? "";
+        if (noDeleteKeys.has(keyId)) return new Response(null, { status: 403 });
         bucket.delete(key);
         return new Response(null, { status: 204 });
       }
@@ -1272,6 +1280,7 @@ try {
           bucket: "content-bucket",
           publicBaseUrl: `https://${PUBLIC}`,
           hasKeys: true,
+          leftover: [],
         });
         assert.ok(accounts2.platforms.includes("instagram"));
         const post = content2.createPost(
@@ -1311,7 +1320,18 @@ try {
         const key = hostedPuts()[0]?.key ?? "";
         assert.match(key, /^t\/[0-9a-f]{32}\.jpg$/u);
         for (const part of ["holiday", "photo", post.id, variant.id, agent.id, "ig-1"]) assert.ok(!key.includes(part));
-        assert.equal(JSON.parse(pendingRow(variant.id) ?? "{}").hostedKey, key, "The key is recorded.");
+        const recorded = JSON.parse(pendingRow(variant.id) ?? "{}");
+        assert.deepEqual(
+          Object.keys(recorded).sort(),
+          ["checkAt", "data", "hostedHost", "hostedKey", "reason"],
+          "The pending data keeps the key and its bucket.",
+        );
+        assert.equal(recorded.hostedKey, key, "The key is recorded.");
+        assert.deepEqual(
+          recorded.hostedHost,
+          { endpointHost: R2, bucket: "content-bucket" },
+          "Its bucket is recorded, and no key or secret.",
+        );
         assert.ok(bucket.has(key));
         const container = sent4.find((entry) => entry.route === "POST graph.instagram.com/v24.0/ig-1/media");
         assert.equal(new URLSearchParams(container?.body).get("image_url"), `https://${PUBLIC}/${key}`);
@@ -1422,7 +1442,7 @@ try {
         // What the publisher does before the container request, then the process stops.
         assert.ok(content2.claimVariant(variant.id, null, clock));
         const key = "t/0123456789abcdef0123456789abcdef.jpg";
-        content2.setHostedKey(variant.id, key, clock);
+        content2.setHostedKey(variant.id, key, { endpointHost: R2, bucket: "content-bucket" }, clock);
         const host = accounts2.mediaHost();
         assert.ok(host);
         await Effect.runPromise(host.put({ bytes: new Uint8Array(JPEG), mimeType: "image/jpeg" }, key));
@@ -1447,7 +1467,12 @@ try {
         const post = queued2("instagram", photo);
         const variant = variant2(post.id, "instagram");
         assert.ok(content2.claimVariant(variant.id, null, clock));
-        content2.setHostedKey(variant.id, "user-assets/logo.png", clock);
+        content2.setHostedKey(
+          variant.id,
+          "user-assets/logo.png",
+          { endpointHost: R2, bucket: "content-bucket" },
+          clock,
+        );
         content2.finishVariant(variant.id, { kind: "failed", code: "unknown-result", message: "x" }, clock);
         r2Log.length = 0;
         await Effect.runPromise(publisher2.releaseHostedMedia());
@@ -1556,7 +1581,11 @@ try {
         await pass2();
         assert.equal(variant2(post.id, "instagram").status, "published");
         assert.equal(r2Log.length, 0, "No bucket request while there is no host.");
-        assert.equal(JSON.parse(pendingRow(variant.id) ?? "{}").hostedKey, key, "The key stays recorded.");
+        assert.deepEqual(
+          JSON.parse(pendingRow(variant.id) ?? "{}"),
+          { hostedKey: key, hostedHost: { endpointHost: R2, bucket: "content-bucket" } },
+          "The key and its bucket stay recorded.",
+        );
         ({ store: content2, accounts2, publisher2 } = build());
         await Effect.runPromise(accounts2.loadMediaHost());
         await Effect.runPromise(publisher2.releaseHostedMedia());
@@ -1573,7 +1602,7 @@ try {
         const { postId, variantId, key } = await publishedWithKept();
         failDeletes = 1;
         r2Log.length = 0;
-        assert.equal(await refusal(service2().deletePost(postId)), cleanupText);
+        assert.equal(await refusal(service2().deletePost({ postId })), cleanupText);
         assert.deepEqual(
           r2Log.map((entry) => `${entry.method} ${entry.key === key}`),
           ["DELETE true"],
@@ -1586,7 +1615,7 @@ try {
           (error) => error instanceof Error && error.message === cleanupText,
         );
         r2Log.length = 0;
-        await Effect.runPromise(service2().deletePost(postId));
+        await Effect.runPromise(service2().deletePost({ postId }));
         assert.deepEqual(r2Log, [{ method: "DELETE", key, bucket: "content-bucket" }]);
         assert.equal(bucket.has(key), false);
         assert.equal(content2.readPost(postId), null, "The post is deleted.");
@@ -1595,28 +1624,43 @@ try {
     );
 
     await step(
-      "20e. A new host is refused while a kept object's DELETE fails; then the old host removes it, and the save runs",
+      "20e. A new bucket is refused with no request while a key of the set-up bucket stays; the same bucket saves",
       async () => {
         await Effect.runPromise(
           accounts2.setApp("instagram", { clientId: "ig-client-id", clientSecret: "ig-client-secret-0123456789" }),
         );
         const { variantId, key } = await publishedWithKept();
         const newHost = { endpoint: `https://${R2}`, bucket: "new-bucket", publicBaseUrl: `https://${PUBLIC}` };
-        failDeletes = 1;
         r2Log.length = 0;
-        assert.equal(await refusal(service2().saveMediaHost(newHost)), cleanupText);
-        assert.deepEqual(r2Log, [{ method: "DELETE", key, bucket: "content-bucket" }], "No request to the new host.");
+        assert.equal(
+          await refusal(service2().saveMediaHost(newHost)),
+          sourceText("error.content.mediaHostCleanupNeedsHost", { bucket: `content-bucket on ${R2}` }),
+        );
+        assert.equal(r2Log.length, 0, "No request to either bucket.");
         assert.equal(JSON.parse(pendingRow(variantId) ?? "{}").hostedKey, key, "The key stays.");
         assert.equal(accounts2.mediaHostView().bucket, "content-bucket", "Nothing is saved.");
+        assert.deepEqual(accounts2.mediaHostView().leftover, [
+          { count: 1, endpointHost: R2, bucket: "content-bucket" },
+        ]);
+        // The same bucket with the saved keys: the check, then the release of the kept object.
+        r2Log.length = 0;
+        await Effect.runPromise(
+          service2().saveMediaHost({ ...newHost, bucket: "content-bucket", publicBaseUrl: `https://${PUBLIC}/` }),
+        );
+        assert.deepEqual(
+          r2Log.map((entry) => `${entry.method} ${entry.bucket}`),
+          ["PUT content-bucket", "GET public", "DELETE content-bucket", "DELETE content-bucket"],
+        );
+        assert.equal(r2Log[3]?.key, key, "The release removes the kept object after the check.");
+        assert.equal(pendingRow(variantId), null);
+        assert.deepEqual(accounts2.mediaHostView().leftover, []);
         r2Log.length = 0;
         const saved = await Effect.runPromise(service2().saveMediaHost(newHost));
         assert.equal(saved.mediaHost?.bucket, "new-bucket");
         assert.deepEqual(
           r2Log.map((entry) => `${entry.method} ${entry.bucket}`),
-          ["DELETE content-bucket", "PUT new-bucket", "GET public", "DELETE new-bucket"],
+          ["PUT new-bucket", "GET public", "DELETE new-bucket"],
         );
-        assert.equal(r2Log[0]?.key, key, "The old host removes the kept object first.");
-        assert.equal(pendingRow(variantId), null);
         assert.equal(bucket.size, 0);
         return { key };
       },
@@ -1686,6 +1730,217 @@ try {
       await Effect.runPromise(accounts2.loadMediaHost());
       return { requests: r2Log.map((entry) => `${entry.method} ${entry.bucket}`) };
     });
+
+    const hostA = { endpoint: `https://${R2}`, bucket: "bucket-a", publicBaseUrl: `https://${PUBLIC}` };
+    const hostB = { ...hostA, bucket: "bucket-b" };
+    const oldKeys = { accessKeyId: "test-access-key-old", secretAccessKey: R2_SECRET };
+    const newKeys = { accessKeyId: "test-access-key-new", secretAccessKey: R2_SECRET };
+    const needsHostText = (host: ContentHostedHost) =>
+      sourceText("error.content.mediaHostCleanupNeedsHost", { bucket: contentBucketLabel(host) });
+    const savedHostFile = () => readFile(join(state2, CONTENT_MEDIA_HOST_FILE), "utf8");
+    /** A failed Threads variant that keeps a recorded key of `host`, or of no bucket; its object exists. */
+    const keptIn = (host: ContentHostedHost | null) => {
+      // Threads, not Instagram: with no host, a new Instagram variant is skipped and cannot be claimed.
+      const post = queued2("threads", pngPhoto);
+      const variant = variant2(post.id, "threads");
+      assert.ok(content2.claimVariant(variant.id, null, clock));
+      const key = contentHostedKey("image/jpeg") ?? "";
+      if (host) content2.setHostedKey(variant.id, key, host, clock);
+      // The shape before the bucket was recorded: only a development profile can have it.
+      else
+        database2.connection
+          .prepare("UPDATE content_variants SET pending_data = ? WHERE variant_id = ?")
+          .run(JSON.stringify({ hostedKey: key }), variant.id);
+      content2.finishVariant(variant.id, { kind: "failed", code: "server", message: "x" }, clock);
+      bucket.set(key, Buffer.from("earlier image"));
+      return { postId: post.id, variantId: variant.id, key };
+    };
+
+    await step(
+      "24. A key names its bucket: another bucket is refused with or without a host; the same bucket saves and releases",
+      async () => {
+        assert.equal(contentBucketLabel(contentHostedHost(hostA)), `bucket-a on ${R2}`);
+        assert.equal(
+          contentShortHost("40392de49b2bbcedca37e4a962440d2d.r2.cloudflarestorage.com"),
+          "40392de4….r2.cloudflarestorage.com",
+        );
+        // A restart whose saved host cannot be read: no host.
+        ({ store: content2, accounts2, publisher2 } = build());
+        const first = keptIn(contentHostedHost(hostA));
+        const before = await savedHostFile();
+        r2Log.length = 0;
+        assert.equal(
+          await refusal(service2().saveMediaHost({ ...hostB, ...oldKeys })),
+          needsHostText(contentHostedHost(hostA)),
+        );
+        assert.equal(r2Log.length, 0, "No request goes to B.");
+        assert.equal(accounts2.mediaHost(), null, "Nothing is saved.");
+        assert.equal(await savedHostFile(), before);
+        assert.deepEqual(accounts2.mediaHostView().leftover, [{ count: 1, endpointHost: R2, bucket: "bucket-a" }]);
+        // A with no host set up: allowed, and the release removes the key from A at once.
+        r2Log.length = 0;
+        await Effect.runPromise(service2().saveMediaHost({ ...hostA, ...oldKeys }));
+        assert.deepEqual(
+          r2Log.map((entry) => `${entry.method} ${entry.bucket}`),
+          ["PUT bucket-a", "GET public", "DELETE bucket-a", "DELETE bucket-a"],
+        );
+        assert.equal(r2Log[3]?.key, first.key);
+        assert.equal(pendingRow(first.variantId), null);
+        assert.equal(bucket.has(first.key), false);
+        // Host A set up and a kept key of A: B is refused the same way.
+        const second = keptIn(contentHostedHost(hostA));
+        const savedA = await savedHostFile();
+        r2Log.length = 0;
+        assert.equal(
+          await refusal(service2().saveMediaHost({ ...hostB, ...newKeys })),
+          needsHostText(contentHostedHost(hostA)),
+        );
+        assert.equal(r2Log.length, 0, "No request goes to B.");
+        assert.equal(accounts2.mediaHostView().bucket, "bucket-a", "Nothing is saved.");
+        assert.equal(await savedHostFile(), savedA);
+        // A again with new keys: allowed, and the release with the new keys removes the key from A.
+        r2Log.length = 0;
+        const saved = await Effect.runPromise(service2().saveMediaHost({ ...hostA, ...newKeys }));
+        assert.deepEqual(
+          r2Log.map((entry) => `${entry.method} ${entry.bucket}`),
+          ["PUT bucket-a", "GET public", "DELETE bucket-a", "DELETE bucket-a"],
+        );
+        assert.equal(r2Log[3]?.key, second.key);
+        assert.equal(pendingRow(second.variantId), null);
+        assert.deepEqual(saved.mediaHost?.leftover, [], "The view is empty after the release.");
+        return { refused: needsHostText(contentHostedHost(hostA)) };
+      },
+    );
+
+    await step(
+      "25. A host of another bucket sends no request for a key of A; a key with no bucket is never tried",
+      async () => {
+        await Effect.runPromise(service2().saveMediaHost(hostB));
+        const ofA = keptIn(contentHostedHost(hostA));
+        const noBucket = keptIn(null);
+        r2Log.length = 0;
+        const logged = logs.length;
+        await Effect.runPromise(publisher2.releaseHostedMedia());
+        assert.equal(r2Log.length, 0, "No request for either key.");
+        assert.equal(JSON.parse(pendingRow(ofA.variantId) ?? "{}").hostedKey, ofA.key, "The key of A stays.");
+        assert.deepEqual(JSON.parse(pendingRow(noBucket.variantId) ?? "{}"), { hostedKey: noBucket.key });
+        const warning = logs
+          .slice(logged)
+          .find((line) => line.includes(ofA.variantId) && line.includes("waits for a host of its bucket"));
+        assert.ok(warning?.includes(ofA.key) && warning.includes("bucket-a") && warning.includes("bucket-b"));
+        // Keys with no bucket are not in the view.
+        assert.deepEqual(accounts2.mediaHostView().leftover, [{ count: 1, endpointHost: R2, bucket: "bucket-a" }]);
+        // A key with no bucket blocks every change of host, as a key of an unknown bucket.
+        r2Log.length = 0;
+        assert.equal(
+          await refusal(service2().saveMediaHost({ ...hostA, ...newKeys })),
+          sourceText("error.content.mediaHostCleanupNeedsHost", { bucket: "?" }),
+        );
+        assert.equal(r2Log.length, 0);
+        // Only "delete and leave the image" clears it; then A saves and removes its own key.
+        await Effect.runPromise(service2().deletePost({ postId: noBucket.postId, leaveHostedMedia: true }));
+        assert.equal(content2.readPost(noBucket.postId), null);
+        assert.equal(r2Log.length, 0, "The leave sends no request.");
+        bucket.delete(noBucket.key);
+        await Effect.runPromise(service2().saveMediaHost({ ...hostA, ...newKeys }));
+        assert.equal(pendingRow(ofA.variantId), null);
+        assert.equal(bucket.has(ofA.key), false);
+        return { kept: ofA.key };
+      },
+    );
+
+    await step(
+      "26. Old keys that get 403 on DELETE: A with new keys that can delete saves, and the release removes the object",
+      async () => {
+        await Effect.runPromise(service2().saveMediaHost({ ...hostA, ...oldKeys }));
+        const kept = keptIn(contentHostedHost(hostA));
+        noDeleteKeys.add(oldKeys.accessKeyId);
+        await Effect.runPromise(publisher2.releaseHostedMedia(kept.variantId));
+        assert.equal(JSON.parse(pendingRow(kept.variantId) ?? "{}").hostedKey, kept.key, "403: the key stays.");
+        assert.ok(bucket.has(kept.key));
+        r2Log.length = 0;
+        await Effect.runPromise(service2().saveMediaHost({ ...hostA, ...newKeys }));
+        assert.deepEqual(
+          r2Log.map((entry) => `${entry.method} ${entry.bucket}`),
+          ["PUT bucket-a", "GET public", "DELETE bucket-a", "DELETE bucket-a"],
+        );
+        assert.equal(r2Log[3]?.key, kept.key);
+        assert.equal(bucket.has(kept.key), false);
+        assert.equal(pendingRow(kept.variantId), null);
+        return { removed: kept.key };
+      },
+    );
+
+    await step(
+      "27. A probe whose DELETE gets 403 fails the check with mediaHostDeleteRefused, and nothing is saved",
+      async () => {
+        const before = await savedHostFile();
+        r2Log.length = 0;
+        const logged = logs.length;
+        assert.equal(
+          await refusal(service2().saveMediaHost({ ...hostA, ...oldKeys })),
+          sourceText("error.content.mediaHostDeleteRefused", { status: "403" }),
+        );
+        assert.deepEqual(
+          r2Log.map((entry) => entry.method),
+          ["PUT", "GET", "DELETE"],
+          "One DELETE: the failed one is not sent again.",
+        );
+        assert.equal(await savedHostFile(), before, "Nothing is saved.");
+        const probe = r2Log[0]?.key ?? "";
+        assert.ok(bucket.has(probe), "The probe file stays, and the log names it.");
+        assert.ok(logs.slice(logged).some((line) => line.includes("probe file") && line.includes(probe)));
+        bucket.delete(probe);
+        noDeleteKeys.clear();
+        return { probe };
+      },
+    );
+
+    await step(
+      "28. Delete and leave the image: only when no set-up host can remove it; with the host, the flag is ignored",
+      async () => {
+        ({ store: content2, accounts2, publisher2 } = build());
+        const kept = keptIn(contentHostedHost(hostA));
+        r2Log.length = 0;
+        assert.equal(
+          await refusal(service2().deletePost({ postId: kept.postId })),
+          needsHostText(contentHostedHost(hostA)),
+        );
+        assert.ok(content2.readPost(kept.postId), "The post stays.");
+        const logged = logs.length;
+        await Effect.runPromise(service2().deletePost({ postId: kept.postId, leaveHostedMedia: true }));
+        assert.equal(content2.readPost(kept.postId), null, "The post and its key go.");
+        assert.equal(pendingRow(kept.variantId), null);
+        assert.equal(r2Log.length, 0, "No request is sent.");
+        assert.ok(
+          logs
+            .slice(logged)
+            .some(
+              (line) => line.includes("left on the image host") && line.includes(kept.key) && line.includes("bucket-a"),
+            ),
+        );
+        bucket.delete(kept.key);
+        // Host A set up and a DELETE that fails: the flag changes nothing.
+        await Effect.runPromise(accounts2.loadMediaHost());
+        const second = keptIn(contentHostedHost(hostA));
+        failDeletes = 1;
+        r2Log.length = 0;
+        assert.equal(
+          await refusal(service2().deletePost({ postId: second.postId, leaveHostedMedia: true })),
+          cleanupText,
+        );
+        assert.deepEqual(
+          r2Log.map((entry) => `${entry.method} ${entry.bucket}`),
+          ["DELETE bucket-a"],
+        );
+        assert.ok(content2.readPost(second.postId), "The post stays.");
+        assert.equal(JSON.parse(pendingRow(second.variantId) ?? "{}").hostedKey, second.key);
+        await Effect.runPromise(service2().deletePost({ postId: second.postId }));
+        assert.equal(content2.readPost(second.postId), null);
+        assert.equal(bucket.has(second.key), false);
+        return { left: kept.key };
+      },
+    );
 
     await step("20f. A retry is due now: a failed post moved to a future time publishes in one pass", async () => {
       const post = queued2("facebook_page", null);

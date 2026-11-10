@@ -11,6 +11,8 @@ import {
   type ContentVariantView,
   contentPostStatus,
 } from "@openbot/contracts/ipc";
+import { contentHostedHost, contentShortHost, sameContentHostedHost } from "@openbot/contracts/ipc-content";
+import { translateFor } from "@openbot/i18n";
 import { sourceText } from "@openbot/i18n/source";
 
 const HOUR = 60 * 60 * 1000;
@@ -157,12 +159,21 @@ export function createMockContent(): ContentDesktopApi {
   const accounts = exampleAccounts();
   let posts = examplePosts();
   let connecting: ContentPlatform | null = null;
+  // Two images of an earlier attempt wait in a bucket, so the host row shows why a change of bucket is
+  // refused. Example values, no real account id. Post views do not carry the keys, so no post names them.
   let mediaHost: ContentMediaHostView = {
     configured: false,
-    endpoint: "https://example.r2.cloudflarestorage.com",
-    bucket: "content-images",
+    endpoint: "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com",
+    bucket: "dev-assets-bucket",
     publicBaseUrl: "https://pub-example.r2.dev",
     hasKeys: false,
+    leftover: [
+      {
+        count: 2,
+        endpointHost: "0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com",
+        bucket: "dev-assets-bucket",
+      },
+    ],
   };
   /** Ends the image host check that waits, as a cancel. */
   let stopHostCheck: (() => void) | null = null;
@@ -185,7 +196,7 @@ export function createMockContent(): ContentDesktopApi {
     })),
     connecting,
     secretStorage: true,
-    mediaHost: { ...mediaHost },
+    mediaHost: structuredClone(mediaHost),
   });
   const find = (postId: string) => {
     const found = posts.find((candidate) => candidate.id === postId);
@@ -230,6 +241,18 @@ export function createMockContent(): ContentDesktopApi {
     },
     saveMediaHost: async (input) => {
       stopHostCheck?.();
+      // As main: a bucket other than the one of a waiting image is refused, and nothing is saved.
+      const next = contentHostedHost(input);
+      const other = mediaHost.leftover.find((item) => !sameContentHostedHost(item, next));
+      if (other)
+        throw new Error(
+          sourceText("error.content.mediaHostCleanupNeedsHost", {
+            bucket: translateFor("en")("content.accounts.mediaHost.bucketOn", {
+              bucket: other.bucket,
+              host: contentShortHost(other.endpointHost),
+            }),
+          }),
+        );
       // As main: the check takes a moment, and a cancel ends it with `mediaHostCancelled`.
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(resolve, 1500);
@@ -246,6 +269,8 @@ export function createMockContent(): ContentDesktopApi {
         bucket: input.bucket,
         publicBaseUrl: input.publicBaseUrl,
         hasKeys: true,
+        // As main: the save of the same bucket removes the waiting images at once.
+        leftover: [],
       };
       changed({ accounts: true });
       return state();

@@ -1,11 +1,12 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import type {
-  ContentAccountView,
-  ContentPlatform,
-  ContentPostView,
-  ContentVariantView,
+import {
+  type ContentAccountView,
+  type ContentPlatform,
+  type ContentPostView,
+  type ContentVariantView,
+  contentShortHost,
 } from "@openbot/contracts/ipc-content";
-import type { AppTextKey } from "@openbot/i18n";
+import { type AppTextKey, translateFor } from "@openbot/i18n";
 import { sourceText } from "@openbot/i18n/source";
 import { addCalendarDays, calendarDayDate, calendarDayOf } from "@openbot/team-client/routine-calendar-dates";
 import { routineOnceInstant } from "@openbot/team-client/routine-schedule";
@@ -74,6 +75,8 @@ const isNamedSection = (section: ContentQueueSection): section is keyof typeof S
 type QueueConfirm =
   | { kind: "publishNow"; post: ContentPostView }
   | { kind: "delete"; post: ContentPostView }
+  /** The delete was refused: no set-up host can remove the post's image. `bucket` is its bare name. */
+  | { kind: "keepImage"; post: ContentPostView; bucket: string }
   | { kind: "retryUnknown"; post: ContentPostView; networks: ContentPlatform[] }
   /** Approve or schedule would skip Instagram, which has no image host. `run` is the action unchanged. */
   | { kind: "needsHost"; post: ContentPostView; only: boolean; run: () => Promise<boolean> };
@@ -81,6 +84,36 @@ type QueueConfirm =
 export interface ContentQueueProps {
   content: ContentState;
   agents: readonly RoutineCalendarAgent[];
+}
+
+/**
+ * The `{bucket}` of an `error.content.mediaHostCleanupNeedsHost` text, or null for any other text. An IPC
+ * error keeps main's English at the end of its message, so the fixed parts of the template are matched
+ * around the value.
+ */
+function needsHostBucket(message: string): string | null {
+  const [start = "", middle = "", end = ""] = sourceText("error.content.mediaHostCleanupNeedsHost", {
+    bucket: "\u0000",
+  }).split("\u0000");
+  const at = message.lastIndexOf(start);
+  if (at < 0 || !message.endsWith(end)) return null;
+  return message.slice(at + start.length).split(middle)[0] ?? null;
+}
+
+/**
+ * The bare bucket name of a refusal's `{bucket}`: main sends the English "<bucket> on <host>" label, and
+ * the leftover list of the host view names the bucket. Text that matches no leftover item stays as it is.
+ */
+function bareBucket(content: ContentState, label: string): string {
+  const english = translateFor("en");
+  const item = content.state.accounts?.mediaHost?.leftover.find(
+    (candidate) =>
+      english("content.accounts.mediaHost.bucketOn", {
+        bucket: candidate.bucket,
+        host: contentShortHost(candidate.endpointHost),
+      }) === label,
+  );
+  return item?.bucket ?? label;
 }
 
 const hostConfigured = (content: ContentState) => content.state.accounts?.mediaHost?.configured === true;
@@ -398,11 +431,31 @@ export function ContentQueue(props: ContentQueueProps) {
     if (!current) return;
     if (current.kind === "publishNow")
       await write(current.post.id, () => api().publishNow({ postId: current.post.id }));
-    else if (current.kind === "delete") {
+    else if (current.kind === "delete" || current.kind === "keepImage") {
+      // A refusal because no set-up host can remove the image keeps the dialog open with the keep-image text.
+      let label: string | null = null;
       const done = await write(current.post.id, async () => {
-        await api().deletePost({ postId: current.post.id });
+        try {
+          await api().deletePost({
+            postId: current.post.id,
+            ...(current.kind === "keepImage" ? { leaveHostedMedia: true as const } : {}),
+          });
+        } catch (error) {
+          label = current.kind === "delete" ? needsHostBucket(error instanceof Error ? error.message : "") : null;
+          if (label === null) throw error;
+        }
         return undefined;
       });
+      if (label !== null) {
+        const bucket = bareBucket(content(), label);
+        setView((draft) => {
+          draft.confirm = { kind: "keepImage", post: current.post, bucket };
+        });
+        // The dialog stays open, so its own initial focus does not run again. Cancel is disabled until the
+        // dialog's pending state ends, after this returns, so focus moves in the next frame.
+        requestAnimationFrame(() => deleteConfirm?.closest("footer")?.querySelector<HTMLElement>("button")?.focus());
+        return;
+      }
       if (done) content().forget(current.post.id);
     } else if (current.kind === "needsHost") {
       if (current.only) return setUpHost();
@@ -412,6 +465,9 @@ export function ContentQueue(props: ContentQueueProps) {
     } else await retry(current.post, true);
     closeConfirm();
   }
+
+  let deleteConfirm: HTMLButtonElement | undefined;
+  const keepImage = () => (view.confirm?.kind === "keepImage" ? view.confirm : null);
 
   const confirmNetwork = () => {
     const current = view.confirm;
@@ -641,13 +697,26 @@ export function ContentQueue(props: ContentQueueProps) {
         onConfirm={confirm}
       />
       <ConfirmDialog
-        open={view.confirm?.kind === "delete"}
-        title={t("content.confirm.delete.title")}
-        description={t("content.confirm.delete.body")}
-        confirmLabel={t("common.delete")}
+        open={view.confirm?.kind === "delete" || view.confirm?.kind === "keepImage"}
+        title={keepImage() ? t("content.confirm.keepImage.title") : t("content.confirm.delete.title")}
+        description={
+          keepImage()
+            ? t("content.confirm.keepImage.body", { bucket: keepImage()?.bucket ?? "" })
+            : t("content.confirm.delete.body")
+        }
+        confirmLabel={keepImage() ? t("content.confirm.keepImage.action") : t("common.delete")}
+        confirmRef={(element) => {
+          deleteConfirm = element;
+        }}
         onCancel={closeConfirm}
         onConfirm={confirm}
-      />
+      >
+        <Show when={keepImage()}>
+          <Button variant="link" onClick={setUpHost}>
+            {t("content.action.setUpHost")}
+          </Button>
+        </Show>
+      </ConfirmDialog>
       <ConfirmDialog
         open={view.confirm?.kind === "needsHost"}
         tone="default"
@@ -760,7 +829,11 @@ function ContentQueueRow(props: ContentQueueRowProps) {
   const menuItems = () => {
     const kind = badge().kind;
     const items: Array<{ key: AppTextKey; run: () => void; destructive?: boolean }> = [];
-    if (props.needsHost) items.push({ key: "content.action.setUpHost", run: props.onSetUpHost });
+    // A network failed because no set-up host can remove its earlier image: setup comes first, as G13.
+    const keptImage = props.post.variants.some(
+      (variant) => variant.status === "failed" && variant.error !== null && needsHostBucket(variant.error) !== null,
+    );
+    if (props.needsHost || keptImage) items.push({ key: "content.action.setUpHost", run: props.onSetUpHost });
     if (kind === "pending") items.push({ key: "content.action.skipPost", run: props.onSkip });
     if (kind === "approved")
       items.push({ key: "common.edit", run: props.onEdit }, { key: "content.action.skipPost", run: props.onSkip });

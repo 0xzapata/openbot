@@ -97,8 +97,11 @@ describe("content decoders", () => {
       bucket: "content-bucket",
       publicBaseUrl: "https://pub.example.test",
       hasKeys: true,
+      leftover: [{ count: 2, endpointHost: "account.r2.example.test", bucket: "content-bucket" }],
     };
     expect(decodeContentAccountsState({ ...ACCOUNTS, mediaHost })).toEqual({ ...ACCOUNTS, mediaHost });
+    const clean = { ...mediaHost, leftover: [] };
+    expect(decodeContentAccountsState({ ...ACCOUNTS, mediaHost: clean })).toEqual({ ...ACCOUNTS, mediaHost: clean });
     expect(decodeContentAccountsState({ ...ACCOUNTS, mediaHost: null })).toEqual({ ...ACCOUNTS, mediaHost: null });
   });
 
@@ -118,6 +121,7 @@ describe("content decoders", () => {
             bucket: "b",
             publicBaseUrl: "https://p",
             hasKeys: true,
+            leftover: [],
             accessKeyId: "k",
           },
         }),
@@ -133,7 +137,37 @@ describe("content decoders", () => {
             bucket: "b",
             publicBaseUrl: "https://p",
             hasKeys: true,
+            leftover: [],
             secretAccessKey: "s",
+          },
+        }),
+    ],
+    [
+      "an image host with no leftover",
+      () =>
+        decodeContentAccountsState({
+          ...ACCOUNTS,
+          mediaHost: {
+            configured: true,
+            endpoint: "https://a",
+            bucket: "b",
+            publicBaseUrl: "https://p",
+            hasKeys: true,
+          },
+        }),
+    ],
+    [
+      "a leftover item with a key",
+      () =>
+        decodeContentAccountsState({
+          ...ACCOUNTS,
+          mediaHost: {
+            configured: true,
+            endpoint: "https://a",
+            bucket: "b",
+            publicBaseUrl: "https://p",
+            hasKeys: true,
+            leftover: [{ count: 1, endpointHost: "a", bucket: "b", key: "t/x.jpg" }],
           },
         }),
     ],

@@ -107,6 +107,12 @@ describe("content payloads from the renderer", () => {
     expect(parseContentSchedulePost({ postId: "p1", scheduledFor: TIME })).toEqual({ postId: "p1", scheduledFor: UTC });
     expect(parseContentPublishNow({ postId: "p1" })).toEqual({ postId: "p1" });
     expect(parseContentDeletePost({ postId: "p1" })).toEqual({ postId: "p1" });
+    expect(parseContentDeletePost({ postId: "p1", leaveHostedMedia: true })).toEqual({
+      postId: "p1",
+      leaveHostedMedia: true,
+    });
+    for (const leaveHostedMedia of [false, "true", 1, null])
+      expect(() => parseContentDeletePost({ postId: "p1", leaveHostedMedia })).toThrow();
     expect(() => parseContentSchedulePost({ postId: "p1" })).toThrow();
     expect(() => parseContentSchedulePost({ postId: "p1", scheduledFor: "soon" })).toThrow();
     expect(() => parseContentPublishNow({ postId: 7 })).toThrow();

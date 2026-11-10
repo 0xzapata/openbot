@@ -4,7 +4,9 @@
  */
 
 import type { ContentDesktopApi } from "@openbot/contracts/ipc";
-import type { ContentPostView } from "@openbot/contracts/ipc-content";
+import { type ContentAccountsState, type ContentPostView, contentShortHost } from "@openbot/contracts/ipc-content";
+import { translateFor } from "@openbot/i18n";
+import { sourceText } from "@openbot/i18n/source";
 import { createRoot, onSettled, untrack } from "solid-js";
 import { ContentView } from "../src/features/content/ContentPanel";
 import { type ContentPane, createContentState } from "../src/features/content/content-context";
@@ -137,3 +139,60 @@ export const overLimitContent = (api: ContentDesktopApi): ContentDesktopApi => (
 const THREADS_TEXT = "We shipped v2 of the widget today, and it is the biggest release since we started. "
   .repeat(7)
   .slice(0, 541);
+
+/** Changes the accounts state that the mock answers. */
+const withAccounts =
+  (change: (state: ContentAccountsState) => ContentAccountsState) =>
+  (api: ContentDesktopApi): ContentDesktopApi => ({
+    ...api,
+    listAccounts: async () => change(await api.listAccounts()),
+  });
+
+/** The host row with no image waiting: the normal state. */
+export const hostCleanContent = withAccounts((state) => ({
+  ...state,
+  mediaHost: state.mediaHost ? { ...state.mediaHost, leftover: [] } : null,
+}));
+
+/** Instagram can post and is connected, and no image host is set up. */
+export const instagramNoHostContent = withAccounts((state) => ({
+  ...state,
+  networks: state.networks.map((network) =>
+    network.platform === "instagram" ? { ...network, available: true } : network,
+  ),
+}));
+
+/** X and LinkedIn have no app and no account, so Connect opens the setup step. */
+export const setupContent = withAccounts((state) => ({
+  ...state,
+  networks: state.networks.map((network) =>
+    network.platform === "x" || network.platform === "linkedin"
+      ? { ...network, account: null, app: { ...network.app, configured: false, clientId: null, hasSecret: false } }
+      : network,
+  ),
+}));
+
+/** A sign-in of X that waits for the browser. */
+export const waitingContent = withAccounts((state) => ({ ...state, connecting: "x" }));
+
+/**
+ * A delete that main refuses because no set-up host can remove the post's image, until the user chooses
+ * to leave it. The refusal is main's English, with the label of the mock's waiting bucket.
+ */
+export const keepImageContent = (api: ContentDesktopApi): ContentDesktopApi => ({
+  ...api,
+  deletePost: async (input) => {
+    if (!input.leaveHostedMedia) {
+      const item = (await api.listAccounts()).mediaHost?.leftover[0];
+      throw new Error(
+        sourceText("error.content.mediaHostCleanupNeedsHost", {
+          bucket: translateFor("en")("content.accounts.mediaHost.bucketOn", {
+            bucket: item?.bucket ?? "",
+            host: contentShortHost(item?.endpointHost ?? ""),
+          }),
+        }),
+      );
+    }
+    return api.deletePost(input);
+  },
+});

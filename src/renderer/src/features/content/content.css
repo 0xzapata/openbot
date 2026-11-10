@@ -425,6 +425,27 @@
   margin-top: var(--openbot-space-2);
 }
 
+/* The host row's description and its leftover lines wrap: the shared item description is one line. */
+.content-media-host .ui-item-description {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* While the host row is open, its icon stays at the top, as in the other rows. */
+.content-media-host[data-open] > .ui-item-media {
+  align-self: flex-start;
+}
+
+/* Save and Cancel of the open host row, under its fields. */
+.content-media-host-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--openbot-space-2);
+  margin-top: var(--openbot-space-2);
+}
+
 /* The redirect address and its copy button on one line. */
 .content-redirect {
   display: flex;

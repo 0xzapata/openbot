@@ -4,9 +4,14 @@ import {
   ContentStory,
   emptyContent,
   failingContent,
+  hostCleanContent,
+  instagramNoHostContent,
+  keepImageContent,
   loadingContent,
   noAccountsContent,
   overLimitContent,
+  setupContent,
+  waitingContent,
 } from "./content-story-support";
 
 /*
@@ -48,7 +53,24 @@ export const ComposerReview: Story = {
 
 export const ComposerNew: Story = { args: { options: { composer: "new" } } };
 
+/** The host row names the bucket where 2 images wait to be removed. */
 export const Accounts: Story = { args: { options: { accounts: true } } };
+
+export const AccountsHostClean: Story = { args: { options: { accounts: true, api: hostCleanContent } } };
+
+/** Instagram is connected, and no image host is set up: the needs-host badge and Set up image host. */
+export const AccountsInstagramNoHost: Story = {
+  args: { options: { accounts: true, api: instagramNoHostContent } },
+};
+
+/** X and LinkedIn have no app: Connect opens the setup step with the redirect URI and Copy. */
+export const AccountsSetup: Story = { args: { options: { accounts: true, api: setupContent } } };
+
+/** The sign-in of X waits for the browser. */
+export const AccountsWaiting: Story = { args: { options: { accounts: true, api: waitingContent } } };
+
+/** Delete in a row menu is refused while no host can remove the image: the keep-image confirm opens. */
+export const QueueKeepImage: Story = { args: { options: { api: keepImageContent } } };
 
 export const CalendarWeek: Story = { args: { options: { pane: "calendar" } } };
 

@@ -4,6 +4,7 @@ import {
   type ContentMediaHostInput,
   type ContentNetworkView,
   type ContentPlatform,
+  contentShortHost,
 } from "@openbot/contracts/ipc-content";
 import { sourceText } from "@openbot/i18n/source";
 import {
@@ -159,7 +160,7 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
   /** The first button of the host row: Save while its fields show, else Set up or Edit. */
   const focusHostAction = () => {
     flush();
-    hostRow()?.querySelector<HTMLElement>(".ui-item-actions button")?.focus();
+    hostRow()?.querySelector<HTMLElement>(".content-media-host-footer button, .ui-item-actions button")?.focus();
   };
 
   /**
@@ -534,7 +535,11 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
                         );
                       }}
                     </For>
-                    <Item role="listitem" class="content-account content-media-host">
+                    <Item
+                      role="listitem"
+                      class="content-account content-media-host"
+                      data-open={state.hostOpen ? "" : undefined}
+                    >
                       <ItemMedia>
                         <Image class="content-network-mark" aria-hidden="true" />
                       </ItemMedia>
@@ -545,6 +550,20 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
                             ? t("content.accounts.mediaHost.configured")
                             : t("content.accounts.mediaHost.needed")}
                         </ItemDescription>
+                        {/* Why a change of bucket is refused, before the user tries it. */}
+                        <For each={hostView()?.leftover ?? []} keyed={(item) => `${item.endpointHost}/${item.bucket}`}>
+                          {(item) => (
+                            <ItemDescription>
+                              {t("content.accounts.mediaHost.leftover", {
+                                count: item().count,
+                                bucket: t("content.accounts.mediaHost.bucketOn", {
+                                  bucket: item().bucket,
+                                  host: contentShortHost(item().endpointHost),
+                                }),
+                              })}
+                            </ItemDescription>
+                          )}
+                        </For>
                         <Show when={state.hostError}>
                           {(error) => (
                             <Text tone="danger" variant="caption" role="alert">
@@ -637,38 +656,38 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
                                 }
                               />
                             </Field>
+                          </fieldset>
+                          {/* Under the fields, so a long loading label does not squeeze them. The caption sits
+                              next to Save, where focus goes after a stop. */}
+                          <div class="content-media-host-footer">
                             <Show when={state.hostCancelled}>
                               <Text variant="caption" tone="muted" role="status">
                                 {t("content.accounts.mediaHost.cancelled")}
                               </Text>
                             </Show>
-                          </fieldset>
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              loading={state.hostChecking}
+                              loadingLabel={t("content.accounts.mediaHost.checking")}
+                              disabled={hostIncomplete()}
+                              onClick={() => void saveHost()}
+                            >
+                              {t("common.save")}
+                            </Button>
+                            <Button variant="ghost" size="xs" onClick={cancelHost}>
+                              {t("common.cancel")}
+                            </Button>
+                          </div>
                         </Show>
                       </ItemContent>
-                      <ItemActions>
-                        <Show
-                          when={state.hostOpen}
-                          fallback={
-                            <Button variant={hostConfigured() ? "ghost" : "outline"} size="xs" onClick={openHost}>
-                              {hostConfigured() ? t("common.edit") : t("content.action.setUpHost")}
-                            </Button>
-                          }
-                        >
-                          <Button
-                            variant="outline"
-                            size="xs"
-                            loading={state.hostChecking}
-                            loadingLabel={t("content.accounts.mediaHost.checking")}
-                            disabled={hostIncomplete()}
-                            onClick={() => void saveHost()}
-                          >
-                            {t("common.save")}
+                      <Show when={!state.hostOpen}>
+                        <ItemActions>
+                          <Button variant={hostConfigured() ? "ghost" : "outline"} size="xs" onClick={openHost}>
+                            {hostConfigured() ? t("common.edit") : t("content.action.setUpHost")}
                           </Button>
-                          <Button variant="ghost" size="xs" onClick={cancelHost}>
-                            {t("common.cancel")}
-                          </Button>
-                        </Show>
-                      </ItemActions>
+                        </ItemActions>
+                      </Show>
                     </Item>
                   </ItemGroup>
                 )}

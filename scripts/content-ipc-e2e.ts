@@ -332,6 +332,7 @@ try {
       bucket: "dev-assets-bucket",
       publicBaseUrl: "https://pub-451ea606e71242028630e5aadc8cd8aa.r2.dev",
       hasKeys: false,
+      leftover: [],
     });
     assert.equal(initial.networks.find((network) => network.platform === "linkedin")?.app.needsSecret, true);
     // Google's token endpoint asks a Desktop client for its secret, also with PKCE.
@@ -445,6 +446,7 @@ try {
         bucket: "content-bucket",
         publicBaseUrl: `https://${R2_PUBLIC}`,
         hasKeys: true,
+        leftover: [],
       });
       const instagram = saved.networks.find((network) => network.platform === "instagram");
       assert.equal(instagram?.app.configured, false, "The host needs no Instagram app.");
@@ -766,8 +768,16 @@ try {
   await step("8. deletePost removes the post and its media files; refused while publishing", async () => {
     const before = await readdir(store.mediaRoot);
     assert.equal(before.length, 2);
+    // `leaveHostedMedia` is `true` or absent; any other value is refused before main reads the post.
+    for (const leaveHostedMedia of [false, "true", 1, null])
+      await assert.rejects(
+        invoke(endpoints.deletePost.channel, { postId: mediaPostId, leaveHostedMedia }, decodeVoid),
+        /Invalid content post/,
+      );
+    assert.equal(store.readPost(mediaPostId)?.id, mediaPostId, "A refused payload deletes nothing.");
+    // With no recorded image, the flag changes nothing: the post is deleted as without it.
     const { fired } = await changesDuring(() =>
-      invoke(endpoints.deletePost.channel, { postId: mediaPostId }, decodeVoid),
+      invoke(endpoints.deletePost.channel, { postId: mediaPostId, leaveHostedMedia: true }, decodeVoid),
     );
     assert.deepEqual(fired, [{ postId: mediaPostId }]);
     assert.deepEqual(await readdir(store.mediaRoot), [], "No other post names the files, so both go.");

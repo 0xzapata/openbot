@@ -116,7 +116,7 @@ export function parseContentPublishNow(value: unknown): ContentPublishNowInput {
 }
 
 export function parseContentDeletePost(value: unknown): ContentDeletePostInput {
-  return parse(z.strictObject({ postId: id }), value, "post");
+  return parse(z.strictObject({ postId: id, leaveHostedMedia: z.literal(true).optional() }), value, "post");
 }
 
 const calendar = z

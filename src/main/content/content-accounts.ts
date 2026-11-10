@@ -12,11 +12,16 @@ import {
   CONTENT_REDIRECT_PATH,
   CONTENT_REDIRECT_PORT,
   CONTENT_REDIRECT_URI,
+  type ContentHostedHost,
   type ContentMediaHostInput,
   type ContentMediaHostView,
   type ContentPlatform,
+  contentHostedHost,
+  contentShortHost,
   isContentPlatform,
+  sameContentHostedHost,
 } from "@openbot/contracts/ipc-content";
+import { translateFor } from "@openbot/i18n";
 import { sourceText } from "@openbot/i18n/source";
 import { registerSecretValue } from "@openbot/logging";
 import { Deferred, Effect, Schema, Semaphore } from "effect";
@@ -68,6 +73,20 @@ const mediaHostSchema = z.strictObject({
   secretAccessKey: z.string().min(1),
 });
 const mediaHostFileSchema = z.object({ version: z.literal(1), host: z.string() });
+
+/**
+ * "<bucket> on <short host>" in English, for a `{bucket}` inside a `sourceText` sentence. The screen maps
+ * the sentence back to its key: `{bucket}` matches any text.
+ */
+export function contentBucketLabel(host: ContentHostedHost | null): string {
+  // ponytail: a key with no recorded bucket (a development profile only) has no name to show, so "?" stands
+  // in. Add a key for "an unknown bucket" if such keys can ever exist in a released profile.
+  if (!host) return "?";
+  return translateFor("en")("content.accounts.mediaHost.bucketOn", {
+    bucket: host.bucket,
+    host: contentShortHost(host.endpointHost),
+  });
+}
 
 /** Starts the callback listener of one sign-in. The E2E gives one that binds no port. */
 export type ContentCallbackListen = (receive: (url: URL) => CallbackAnswer) => Promise<{ close: () => Promise<void> }>;
@@ -148,6 +167,22 @@ export class ContentAccounts {
     return this.#mediaHost?.host ?? null;
   }
 
+  /** The bucket of the set-up image host, or null with no host. */
+  mediaHostBucket(): ContentHostedHost | null {
+    return this.#mediaHost ? contentHostedHost(this.#mediaHost.settings) : null;
+  }
+
+  /**
+   * The refusal for a kept image host key. Main picks the text here, for the publisher and for
+   * `ContentService`: the set-up host of the key's bucket could not remove it (`mediaHostCleanup`; the
+   * next try can work), or no set-up host can reach it (`mediaHostCleanupNeedsHost`, which names the
+   * key's bucket).
+   */
+  hostedCleanupText(keyHost: ContentHostedHost | null): string {
+    if (sameContentHostedHost(keyHost, this.mediaHostBucket())) return sourceText("error.content.mediaHostCleanup");
+    return sourceText("error.content.mediaHostCleanupNeedsHost", { bucket: contentBucketLabel(keyHost) });
+  }
+
   /** The image host settings for the renderer: never the access key or the secret. */
   mediaHostView(): ContentMediaHostView {
     const settings = this.#mediaHost?.settings;
@@ -157,6 +192,9 @@ export class ContentAccounts {
       bucket: settings?.bucket ?? CONTENT_MEDIA_HOST_DEFAULTS.bucket,
       publicBaseUrl: settings?.publicBaseUrl ?? CONTENT_MEDIA_HOST_DEFAULTS.publicBaseUrl,
       hasKeys: settings !== undefined,
+      leftover: this.#store
+        .hostedBuckets()
+        .flatMap(({ count, host }) => (host ? [{ count, endpointHost: host.endpointHost, bucket: host.bucket }] : [])),
     };
   }
 

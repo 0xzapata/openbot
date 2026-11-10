@@ -33,7 +33,7 @@ export function contentIpcHandlers({ content }: ContentIpcDependencies): Pick<Ip
       listPosts: payloadHandler(parseContentListPosts, (input) => runCauseEffect(content.listPosts(input))),
       createPost: payloadHandler(parseContentCreatePost, (input) => runCauseEffect(content.createPost(input))),
       updatePost: payloadHandler(parseContentUpdatePost, (input) => runCauseEffect(content.updatePost(input))),
-      deletePost: payloadHandler(parseContentDeletePost, (input) => runCauseEffect(content.deletePost(input.postId))),
+      deletePost: payloadHandler(parseContentDeletePost, (input) => runCauseEffect(content.deletePost(input))),
       schedulePost: payloadHandler(parseContentSchedulePost, (input) =>
         runCauseEffect(content.schedulePost(input.postId, input.scheduledFor)),
       ),
