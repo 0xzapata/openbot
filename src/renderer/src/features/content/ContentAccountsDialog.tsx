@@ -1,5 +1,9 @@
 import type { ContentAccountsState, ContentNetworkView, ContentPlatform } from "@openbot/contracts/ipc-content";
 import {
+  Alert,
+  AlertActions,
+  AlertContent,
+  AlertDescription,
   Badge,
   Button,
   ConfirmDialog,
@@ -21,7 +25,7 @@ import {
 import { ContentNetworkMark } from "@openbot/ui/features/content/ContentParts";
 import { CONTENT_NETWORK_NAMES, contentGateKey } from "@openbot/ui/features/content/content-status";
 import { useText } from "@openbot/ui/text";
-import { createStore, For, Match, Show, Switch } from "solid-js";
+import { createEffect, createStore, For, Match, onSettled, Show, Switch } from "solid-js";
 import type { ContentState } from "./content-context";
 
 /** The badge of a network, as `ProviderAccountList` maps account states. */
@@ -47,10 +51,27 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
     clientSecret: string;
     errors: Partial<Record<ContentPlatform, string>>;
     disconnect: ContentNetworkView | null;
-  }>({ setup: null, clientId: "", clientSecret: "", errors: {}, disconnect: null });
+    /** The sign-in that this window started, before the first refresh shows it. */
+    starting: ContentPlatform | null;
+  }>({ setup: null, clientId: "", clientSecret: "", errors: {}, disconnect: null, starting: null });
   const accounts = () => props.content.state.accounts;
-  const connecting = () => accounts()?.connecting ?? null;
+  const connecting = () => state.starting ?? accounts()?.connecting ?? null;
   const open = () => props.content.state.accountsDialog !== null;
+  // A controlled dialog has no Kobalte trigger, so it keeps the element that opened it, as `ConfirmDialog` does.
+  let restoreTarget: HTMLElement | undefined;
+  let restoreFrame: number | undefined;
+  onSettled(() => () => {
+    if (restoreFrame !== undefined) cancelAnimationFrame(restoreFrame);
+  });
+  // A typed client secret that was not sent does not stay in memory after the dialog closes.
+  createEffect(open, (isOpen) => {
+    if (isOpen) return;
+    setState((draft) => {
+      draft.setup = null;
+      draft.clientId = "";
+      draft.clientSecret = "";
+    });
+  });
 
   const setError = (platform: ContentPlatform, error: string | undefined) =>
     setState((draft) => {
@@ -84,9 +105,11 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
     }
     const clientId = state.setup === network.platform ? state.clientId.trim() : "";
     const clientSecret = state.setup === network.platform ? state.clientSecret : "";
+    // The wait shows at once, so a second click cannot start, or cancel, a second sign-in.
     setState((draft) => {
       draft.setup = null;
       draft.clientSecret = "";
+      draft.starting = network.platform;
     });
     // `beginConnect` ends when the sign-in ends; `connecting` shows the wait meanwhile.
     void call(network.platform, () =>
@@ -94,6 +117,10 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
         platform: network.platform,
         ...(clientId ? { clientId } : {}),
         ...(clientSecret ? { clientSecret } : {}),
+      }),
+    ).finally(() =>
+      setState((draft) => {
+        if (draft.starting === network.platform) draft.starting = null;
       }),
     );
     void props.content.reloadAccounts();
@@ -117,7 +144,23 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
       <Dialog.Root open={open()} onOpenChange={(next) => !next && props.content.closeAccounts()}>
         <Dialog.Portal>
           <Dialog.Overlay>
-            <Dialog.Content as="section" class="content-accounts">
+            <Dialog.Content
+              as="section"
+              class="content-accounts"
+              onOpenAutoFocus={() => {
+                const opener = document.activeElement;
+                restoreTarget = opener instanceof HTMLElement && opener !== document.body ? opener : undefined;
+              }}
+              onCloseAutoFocus={(event) => {
+                const target = restoreTarget;
+                if (!target?.isConnected) return;
+                event.preventDefault();
+                target.focus({ preventScroll: true });
+                restoreFrame = requestAnimationFrame(() => {
+                  if (!open() && target.isConnected) target.focus({ preventScroll: true });
+                });
+              }}
+            >
               <header class="content-accounts-head">
                 <div>
                   <Dialog.Title as="h2">{t("content.accounts.title")}</Dialog.Title>
@@ -130,12 +173,25 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
               <Show
                 when={accounts()}
                 fallback={
-                  <div aria-busy="true">
-                    <p class="sr-only" role="status">
-                      {t("content.accounts.loading")}
-                    </p>
-                    <For each={[0, 1, 2]}>{() => <Skeleton class="content-skeleton-row" />}</For>
-                  </div>
+                  props.content.state.accountsError ? (
+                    <Alert tone="danger" role="alert">
+                      <AlertContent>
+                        <AlertDescription>{t("content.accounts.loadFailed")}</AlertDescription>
+                      </AlertContent>
+                      <AlertActions>
+                        <Button variant="outline" size="sm" onClick={() => void props.content.reloadAccounts()}>
+                          {t("common.retry")}
+                        </Button>
+                      </AlertActions>
+                    </Alert>
+                  ) : (
+                    <div aria-busy="true">
+                      <p class="sr-only" role="status">
+                        {t("content.accounts.loading")}
+                      </p>
+                      <For each={[0, 1, 2]}>{() => <Skeleton class="content-skeleton-row" />}</For>
+                    </div>
+                  )
                 }
               >
                 {(current) => (

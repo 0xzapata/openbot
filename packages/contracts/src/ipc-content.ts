@@ -294,7 +294,7 @@ export interface ContentCreatePostInput {
   variants?: ContentSaveVariantInput[];
 }
 
-export const CONTENT_UPDATE_ACTIONS = ["edit", "approve", "unschedule", "retry"] as const;
+export const CONTENT_UPDATE_ACTIONS = ["edit", "approve", "unapprove", "unschedule", "retry"] as const;
 
 export interface ContentUpdatePostInput {
   postId: string;

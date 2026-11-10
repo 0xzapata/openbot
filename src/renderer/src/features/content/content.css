@@ -138,6 +138,9 @@
 }
 
 .content-row-error {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
   color: var(--openbot-danger-text);
 }
 
@@ -239,6 +242,16 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--openbot-space-2);
+}
+
+/* Pick a time: the date, the time, the zone and Schedule, on the routine popover surface. */
+.content-pick-time {
+  display: grid;
+  gap: var(--openbot-space-2);
+}
+
+.content-pick-time .content-composer-hint:empty {
+  display: none;
 }
 
 /* A radio item with the look of the billing timing choice. */

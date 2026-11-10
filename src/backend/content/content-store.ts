@@ -130,19 +130,24 @@ export class ContentStore {
   readonly #database: OpenBotDatabase;
   readonly #queued: () => void;
   readonly #changed: (event: ContentChangedEvent) => void;
+  readonly #publishable: () => readonly ContentPlatform[];
 
   /**
    * `queued` runs after a user write that queues a variant, so the routine timer plans the new time.
    * `changed` runs once after each write that commits, so main can tell the windows.
+   * `publishable` names the networks that this version can post to. A user write never queues another
+   * network: it skips it.
    */
   constructor(
     database: OpenBotDatabase,
     queued: () => void = () => {},
     changed: (event: ContentChangedEvent) => void = () => {},
+    publishable: () => readonly ContentPlatform[] = () => CONTENT_PLATFORM_KEYS,
   ) {
     this.#database = database;
     this.#queued = queued;
     this.#changed = changed;
+    this.#publishable = publishable;
   }
 
   /** The folder of the media files. A media record names only a file in it. */
@@ -158,6 +163,7 @@ export class ContentStore {
     const postId = randomUUID();
     const createdAt = now.toISOString();
     const queue = input.approvalState === "none" && input.scheduledFor !== null;
+    const publishable = this.#publishable();
     const post = this.#database.dispatch(
       `content:create-post:${postId}`,
       [{ aggregateType: "content-post", aggregateId: postId, eventType: "content-post.created", payload: input }],
@@ -202,7 +208,11 @@ export class ContentStore {
             variant?.body ?? null,
             variant?.title ?? null,
             mediaJson(variant?.media ?? null),
-            variant?.status === "skipped" ? "skipped" : queue ? "queued" : "draft",
+            variant?.status === "skipped" || (queue && !publishable.includes(platform))
+              ? "skipped"
+              : queue
+                ? "queued"
+                : "draft",
             createdAt,
             createdAt,
             sequence,
@@ -278,6 +288,7 @@ export class ContentStore {
       );
       const statuses = new Map(post.variants.map((variant) => [variant.platform, variant.status]));
       const changes = edit.variants ?? [];
+      const publishable = this.#publishable();
       // Skips first, so a network taken back in the same edit sees the other networks as they will be.
       for (const change of changes) {
         if (change.skipped !== true) continue;
@@ -289,7 +300,7 @@ export class ContentStore {
       }
       for (const change of changes) {
         if (change.skipped !== false || statuses.get(change.platform) !== "skipped") continue;
-        const next = unskipStatus(statuses, change.platform);
+        const next = unskipStatus(statuses, change.platform, publishable);
         if (next === "queued") unskippedToQueue = true;
         statuses.set(change.platform, next);
       }
@@ -397,6 +408,27 @@ export class ContentStore {
     return result;
   }
 
+  /**
+   * The Undo of Approve: the post waits for approval again, every queued network goes back to draft, and
+   * the time stays as the proposal. Refused once a network posts it or has it.
+   */
+  unapprovePost(postId: string, now = new Date()): ContentPost {
+    return this.#postWrite(postId, "content-post.unapproved", { postId }, (post, db, sequence) => {
+      if (
+        post.approvalState !== "approved" ||
+        post.variants.some((variant) => variant.status === "publishing" || variant.status === "published")
+      )
+        throw new ContentStateError(sourceText("error.content.cannotUnapprove"));
+      const time = now.toISOString();
+      db.prepare(
+        "UPDATE content_posts SET approval_state = 'pending', updated_at = ?, last_event_sequence = ? WHERE post_id = ?",
+      ).run(time, sequence, postId);
+      db.prepare(
+        "UPDATE content_variants SET status = 'draft', updated_at = ?, last_event_sequence = ? WHERE post_id = ? AND status = 'queued'",
+      ).run(time, sequence, postId);
+    });
+  }
+
   /** Sets the one time of the post and queues every draft. A pending post must be approved first. */
   schedulePost(postId: string, scheduledFor: string, now = new Date()): ContentPost {
     const time = new Date(scheduledFor);
@@ -446,7 +478,11 @@ export class ContentStore {
         next = "skipped";
       } else {
         if (variant.status !== "skipped") throw new ContentStateError(sourceText("error.content.notSkipped"));
-        next = unskipStatus(new Map(post.variants.map((other) => [other.platform, other.status])), platform);
+        next = unskipStatus(
+          new Map(post.variants.map((other) => [other.platform, other.status])),
+          platform,
+          this.#publishable(),
+        );
       }
       db.prepare(
         "UPDATE content_variants SET status = ?, updated_at = ?, last_event_sequence = ? WHERE variant_id = ?",
@@ -792,10 +828,12 @@ export class ContentStore {
     return result;
   }
 
+  /** Queues every draft of a network that this version can post to, and skips the other drafts. */
   #queueDrafts(db: DatabaseSync, postId: string, now: Date, sequence: number): void {
     db.prepare(
-      "UPDATE content_variants SET status = 'queued', updated_at = ?, last_event_sequence = ? WHERE post_id = ? AND status = 'draft'",
-    ).run(now.toISOString(), sequence, postId);
+      `UPDATE content_variants SET status = CASE WHEN platform IN (SELECT value FROM json_each(?)) THEN 'queued'
+         ELSE 'skipped' END, updated_at = ?, last_event_sequence = ? WHERE post_id = ? AND status = 'draft'`,
+    ).run(JSON.stringify(this.#publishable()), now.toISOString(), sequence, postId);
   }
 
   /** One user write of a post, in one dispatch with one `content-post` event. */
@@ -863,12 +901,17 @@ function refuseSentPost(post: ContentPost): void {
     throw new ContentStateError(sourceText("error.content.published"));
 }
 
-/** Decision A: a network taken back is queued only when another network of the post is queued. */
+/**
+ * Decision A: a network taken back is queued only when another network of the post is queued. A network
+ * that this version cannot post to stays skipped rather than be queued.
+ */
 function unskipStatus(
   statuses: ReadonlyMap<ContentPlatform, ContentVariant["status"]>,
   platform: ContentPlatform,
-): "queued" | "draft" {
-  return [...statuses].some(([other, status]) => other !== platform && status === "queued") ? "queued" : "draft";
+  publishable: readonly ContentPlatform[],
+): "queued" | "draft" | "skipped" {
+  if (![...statuses].some(([other, status]) => other !== platform && status === "queued")) return "draft";
+  return publishable.includes(platform) ? "queued" : "skipped";
 }
 
 /** Thrown inside a claim that found no queued row, so its transaction rolls back. */

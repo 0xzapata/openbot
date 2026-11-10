@@ -358,25 +358,25 @@ export function PostCalendar(props: PostCalendarProps) {
                           </h3>
                           <Show when={dayEntries().length > 0}>
                             <ul class="routine-planner-runs">
-                              <For each={dayEntries().slice(0, limit())}>
+                              <For each={dayEntries().slice(0, limit())} keyed={(entry) => entry.post.id}>
                                 {(entry) => (
                                   <li>
                                     <Button
                                       variant="ghost"
                                       class="routine-planner-run"
-                                      data-status={entry.status}
+                                      data-status={entry().status}
                                       aria-label={t("content.calendar.entry", {
-                                        title: entry.title,
-                                        time: timeText(entry.at),
-                                        status: statusText(entry),
+                                        title: entry().title,
+                                        time: timeText(entry().at),
+                                        status: statusText(entry()),
                                       })}
-                                      onClick={() => props.onOpenPost(entry.post.id)}
+                                      onClick={() => props.onOpenPost(entry().post.id)}
                                     >
-                                      <PostCalendarStatusMark status={entry.status} />
-                                      <span class="routine-planner-run-time">{timeText(entry.at)}</span>
-                                      <span class="routine-planner-run-name">{entry.title}</span>
+                                      <PostCalendarStatusMark status={entry().status} />
+                                      <span class="routine-planner-run-time">{timeText(entry().at)}</span>
+                                      <span class="routine-planner-run-name">{entry().title}</span>
                                       <span class="routine-planner-avatars post-calendar-marks" aria-hidden="true">
-                                        <For each={entry.networks}>
+                                        <For each={entry().networks}>
                                           {(platform) => <ContentNetworkMark platform={platform} />}
                                         </For>
                                       </span>
@@ -412,11 +412,14 @@ export function PostCalendar(props: PostCalendarProps) {
                 fallback={<p class="routine-planner-note">{t("content.calendar.upcomingEmpty")}</p>}
               >
                 <ul class="routine-planner-entries">
-                  <For each={upcoming()}>
+                  <For each={upcoming()} keyed={(entry) => entry.post.id}>
                     {(entry) => (
                       <PostCalendarEntry
-                        entry={entry}
-                        meta={t("content.calendar.entryMeta", { when: upcomingWhen(entry.at), note: entryNote(entry) })}
+                        entry={entry()}
+                        meta={t("content.calendar.entryMeta", {
+                          when: upcomingWhen(entry().at),
+                          note: entryNote(entry()),
+                        })}
                         onOpenPost={props.onOpenPost}
                       />
                     )}
@@ -447,23 +450,25 @@ function PostCalendarDay(props: {
       const hour = calendarHourOf(new Date(entry.at), props.timeZone);
       byHour.set(hour, [...(byHour.get(hour) ?? []), entry]);
     }
-    return [...byHour.values()];
+    return [...byHour].map(([hour, entries]) => ({ hour, entries }));
   });
   return (
     <div class="routine-planner-day-view">
       <Show when={hours().length > 0} fallback={<p class="routine-planner-note">{t("content.calendar.dayEmpty")}</p>}>
-        <For each={hours()}>
+        <For each={hours()} keyed={(group) => group.hour}>
           {(group) => (
             <section class="routine-planner-hour">
-              <h3>{format.date(new Date(group[0]?.at ?? 0), { hour: "numeric", timeZone: props.timeZone })}</h3>
+              <h3>
+                {format.date(new Date(group().entries[0]?.at ?? 0), { hour: "numeric", timeZone: props.timeZone })}
+              </h3>
               <ul class="routine-planner-entries">
-                <For each={group}>
+                <For each={group().entries} keyed={(entry) => entry.post.id}>
                   {(entry) => (
                     <PostCalendarEntry
-                      entry={entry}
+                      entry={entry()}
                       meta={t("content.calendar.entryMeta", {
-                        when: props.timeText(entry.at),
-                        note: props.note(entry),
+                        when: props.timeText(entry().at),
+                        note: props.note(entry()),
                       })}
                       onOpenPost={props.onOpenPost}
                     />

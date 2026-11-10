@@ -37,7 +37,7 @@ export interface ContentNetworkChipProps {
   status: ContentVariantStatus | "pending";
   /** A network already has the post: no network can be skipped or taken back. */
   locked?: boolean;
-  /** The provider message of a failed network. It shows in the tooltip as it is. */
+  /** The stored error of a failed network: `sourceText` English or provider text. It shows localized. */
   error?: string | null;
   /** Skips the network (`false`) or takes it back (`true`). Only a toggle chip calls it. */
   onToggle?: (included: boolean) => void;
@@ -48,10 +48,17 @@ export interface ContentNetworkChipProps {
  * chip is a status image with a label. A glyph or a dashed outline goes with each colour.
  */
 export function ContentNetworkChip(props: ContentNetworkChipProps) {
-  const { t } = useText();
+  const { t, errorMessage } = useText();
   const chip = () => variantChip(props.status, props.locked);
   const network = () => CONTENT_NETWORK_NAMES[props.platform];
   const statusLabel = () => t("content.chip.label", { network: network(), status: t(chip().statusKey) });
+  const errorLabel = () =>
+    props.error
+      ? t("content.chip.error", {
+          label: statusLabel(),
+          reason: errorMessage(props.error, t("content.variant.failed")),
+        })
+      : statusLabel();
   const toggleLabel = () =>
     chip().pressed ? t("content.chip.skip", { network: network() }) : t("content.chip.include", { network: network() });
   const glyph = () => (
@@ -71,14 +78,14 @@ export function ContentNetworkChip(props: ContentNetworkChipProps) {
     <Show
       when={chip().toggle}
       fallback={
-        <LabelTooltip content={props.error ? `${statusLabel()} · ${props.error}` : statusLabel()}>
+        <LabelTooltip content={errorLabel()}>
           <LabelTooltipTrigger
             as="span"
             class="content-chip"
             data-status={chip().look}
             role="img"
             tabindex={props.error ? 0 : undefined}
-            aria-label={props.error ? `${statusLabel()}. ${props.error}` : statusLabel()}
+            aria-label={errorLabel()}
           >
             <ContentNetworkMark platform={props.platform} />
             {glyph()}
@@ -164,6 +171,8 @@ export interface ContentMediaFieldProps {
   labelledBy: string;
   file: ContentMediaFieldFile | null;
   busy?: boolean;
+  /** The post cannot change: no choose, drop or remove. */
+  disabled?: boolean;
   /** Opens the file dialog of the platform. */
   onChoose: () => void;
   /** Takes the first file of a drop. */
@@ -177,7 +186,12 @@ export function ContentMediaField(props: ContentMediaFieldProps) {
   const [over, setOver] = createSignal(false);
   const hasFiles = (event: DragEvent) => [...(event.dataTransfer?.items ?? [])].some((item) => item.kind === "file");
   return (
-    <fieldset class="content-media" aria-labelledby={props.labelledBy} aria-busy={props.busy ? "true" : undefined}>
+    <fieldset
+      class="content-media"
+      aria-labelledby={props.labelledBy}
+      aria-busy={props.busy ? "true" : undefined}
+      disabled={props.disabled}
+    >
       <Show
         when={props.file}
         fallback={
@@ -195,7 +209,7 @@ export function ContentMediaField(props: ContentMediaFieldProps) {
             onDrop={(event) => {
               setOver(false);
               const file = event.dataTransfer?.files[0];
-              if (!file) return;
+              if (!file || props.disabled) return;
               event.preventDefault();
               props.onDrop(file);
             }}
@@ -227,6 +241,7 @@ export function ContentMediaField(props: ContentMediaFieldProps) {
             </span>
             <ImageRemoveButton
               label={t("content.composer.mediaRemove", { name: file().name })}
+              disabled={props.disabled}
               onClick={() => props.onRemove()}
             />
           </div>

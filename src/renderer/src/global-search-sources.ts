@@ -171,8 +171,11 @@ export function useGlobalSearchSources(open: () => boolean) {
             icon: Megaphone,
             keywords: t("content.palette.keywords"),
             run: () => {
-              content.closeComposer();
-              content.setPane("queue");
+              // A composer with unsaved text stays open: its Back asks before it discards them.
+              if (!content.composerDirty()) {
+                content.closeComposer();
+                content.setPane("queue");
+              }
               openContent(server.id, globalSearchOpener());
             },
           },

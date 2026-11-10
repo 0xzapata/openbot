@@ -229,9 +229,16 @@ try {
   let clock = new Date("2030-03-01T09:00:00.000Z");
   const now = () => clock;
   let arms = 0;
-  const content = new ContentStore(database, () => {
-    arms += 1;
-  });
+  const content = new ContentStore(
+    database,
+    () => {
+      arms += 1;
+    },
+    () => {},
+    () => accounts.platforms,
+  );
+  // An older version queued every network; this store writes such rows for the "older data" checks.
+  const olderVersion = new ContentStore(database);
   const sleeps: number[] = [];
   const adapterOptions = {
     fetch: fakeFetch,
@@ -440,7 +447,7 @@ try {
   const commentary = "Launch (v2) is live #ship @team_a [notes] *now* <3 {ok} | ~_~ \\o/";
   let launchPostId = "";
 
-  await step("3. An approved post publishes on X and LinkedIn at its time; the four others stay queued", async () => {
+  await step("3. An approved post publishes on X and LinkedIn at its time; approve skips the four others", async () => {
     const time = new Date(clock.getTime() + 2 * 60 * 60_000);
     const post = content.createPost(
       {
@@ -459,7 +466,14 @@ try {
     const armsBefore = arms;
     content.approvePost(post.id, clock);
     assert.ok(arms > armsBefore, "The approve plans the timer again.");
-    assert.deepEqual(new Set(Object.values(statuses(post.id))), new Set(["queued"]));
+    assert.deepEqual(statuses(post.id), {
+      x: "queued",
+      linkedin: "queued",
+      instagram: "skipped",
+      threads: "skipped",
+      facebook_page: "skipped",
+      youtube: "skipped",
+    });
     assert.equal(publisher.nextDueAt(), time.toISOString());
 
     // Before the time nothing happens.
@@ -518,23 +532,43 @@ try {
     assert.equal(linkedin.externalPostId, "urn:li:share:7001");
     for (const platform of ["instagram", "threads", "facebook_page", "youtube"] as const) {
       const variant = variantOf(post.id, platform);
-      assert.equal(variant.status, "queued");
+      assert.equal(variant.status, "skipped");
       assert.equal(variant.error, null);
       assert.equal(variant.attempt, 0);
     }
-    // The timer does not spin: the four networks with no adapter are not due.
     assert.equal(publisher.nextDueAt(), null);
     assert.equal((await requestsDuring(pass)).length, 0, "A second pass sends nothing.");
-    assert.equal(content.nextDueAt([...CONTENT_PLATFORM_KEYS]), time.toISOString(), "The four are still queued.");
+    assert.equal(contentPostStatus(content.readPost(post.id)?.variants ?? []), "published");
     return { requests: sent.length, statuses: statuses(post.id) };
   });
 
-  await step("4. The post status is queued while the four networks with no adapter wait (step 2 reality)", async () => {
-    const post = content.readPost(launchPostId);
-    assert.ok(post);
-    assert.equal(contentPostStatus(post.variants), "queued");
-    return { status: contentPostStatus(post.variants) };
-  });
+  await step(
+    "4. Older data: a queued network with no adapter stays untouched and does not spin the timer",
+    async () => {
+      const older = olderVersion.createPost(
+        {
+          body: "Older data",
+          media: null,
+          approvalState: "none",
+          scheduledFor: clock.toISOString(),
+          timezone: "UTC",
+          authorAgentId: null,
+          variants: { x: skip, linkedin: skip },
+        },
+        clock,
+      );
+      assert.equal(variantOf(older.id, "instagram").status, "queued", "The older version queued it.");
+      assert.equal(publisher.nextDueAt(), null, "The timer does not spin.");
+      assert.equal((await requestsDuring(pass)).length, 0);
+      assert.equal(variantOf(older.id, "instagram").status, "queued", "No pass changes it.");
+      assert.equal(content.nextDueAt([...CONTENT_PLATFORM_KEYS]), clock.toISOString(), "It is still queued.");
+      const post = content.readPost(older.id);
+      assert.ok(post);
+      assert.equal(contentPostStatus(post.variants), "queued");
+      content.deletePost(older.id);
+      return { status: contentPostStatus(post.variants) };
+    },
+  );
 
   await step(
     "5. X 500 fails as server, waits for a manual retry, then publishes; 429 and 403 fail clearly",
@@ -704,7 +738,7 @@ try {
       assert.equal(x.error, "Sign in to X again.");
       assert.equal(variantOf(post.id, "linkedin").status, "published", "LinkedIn is not affected.");
       for (const platform of ["instagram", "threads", "facebook_page", "youtube"] as const)
-        assert.equal(variantOf(post.id, platform).status, "queued");
+        assert.equal(variantOf(post.id, platform).status, "skipped", "Schedule skips a network with no adapter.");
       return { statuses: statuses(post.id) };
     },
   );
@@ -747,7 +781,8 @@ try {
     content.unschedulePost(post.id, clock);
     const after = content.readPost(post.id);
     assert.equal(after?.scheduledFor, null, "The user removed the time.");
-    assert.deepEqual(new Set(Object.values(statuses(post.id))), new Set(["draft"]));
+    assert.equal(variantOf(post.id, "x").status, "draft");
+    assert.equal(variantOf(post.id, "linkedin").status, "draft");
     content.setVariantSkipped(post.id, "x", true, clock);
     assert.equal(variantOf(post.id, "x").status, "skipped");
     content.setVariantSkipped(post.id, "x", false, clock);

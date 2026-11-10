@@ -4,7 +4,7 @@ import { Alert, AlertContent, AlertDescription, Button, Plus, SlidingTabs } from
 import { PostCalendar } from "@openbot/ui/features/content/PostCalendar";
 import type { RoutineCalendarAgent } from "@openbot/ui/features/conversation/RoutineCalendar";
 import { useText } from "@openbot/ui/text";
-import { createEffect, createStore, Match, Show, Switch } from "solid-js";
+import { createEffect, createStore, Match, Show, Switch, untrack } from "solid-js";
 import { useAgents } from "../agents/agents-context";
 import { ContentAccountsDialog } from "./ContentAccountsDialog";
 import { ContentComposer } from "./ContentComposer";
@@ -44,10 +44,6 @@ export interface ContentViewProps {
 export function ContentView(props: ContentViewProps) {
   const { t } = useText();
   const content = () => props.content;
-  const composerPost = (): ContentPostView | null => {
-    const id = content().state.composer?.postId;
-    return id ? (content().state.posts.find((post) => post.id === id) ?? null) : null;
-  };
   return (
     <section class="content-page" aria-labelledby="content-page-heading">
       <header class="content-page-title">
@@ -103,14 +99,9 @@ export function ContentView(props: ContentViewProps) {
               </>
             }
           >
-            {/* Keyed by the post, so a new target starts a new form. */}
-            <Show when={content().state.composer?.postId ?? "new"} keyed>
-              <ContentComposer
-                content={content()}
-                post={composerPost()}
-                agents={props.agents}
-                onClose={() => content().closeComposer()}
-              />
+            {/* Keyed by the session, so a new target starts a new form and a first save keeps it. */}
+            <Show when={content().state.composer?.session} keyed>
+              <ContentComposer content={content()} agents={props.agents} onClose={() => content().closeComposer()} />
             </Show>
           </Show>
           <ContentAccountsDialog content={content()} />
@@ -160,9 +151,12 @@ function ContentCalendar(props: { content: ContentState }) {
 
   // The queue reloads on each `content:changed`; the calendar follows its posts and keeps its days on screen.
   createEffect(
-    () => props.content.state.posts,
     () => {
-      void load(state.phase === "ready");
+      void props.content.state.posts;
+      return untrack(() => state.phase === "ready");
+    },
+    (ready) => {
+      void load(ready);
     },
   );
 
@@ -178,10 +172,9 @@ function ContentCalendar(props: { content: ContentState }) {
           void load();
         }}
         onOpenPost={(postId) => {
+          // The composer keeps the post it opened with, also when it is not in the queue page.
           const post = state.posts.find((candidate) => candidate.id === postId);
-          if (post && !props.content.state.posts.some((candidate) => candidate.id === postId))
-            props.content.remember(post);
-          props.content.openComposer(postId);
+          if (post) props.content.openComposer(post);
         }}
         onNewPost={() => props.content.openComposer(null)}
         onRetry={() => void load()}

@@ -62,7 +62,11 @@ export function contentPostLocked(post: Pick<ContentPostView, "variants">): bool
   return statuses(post).some((status) => status === "publishing" || status === "published");
 }
 
-/** The status badge of a queue row. The first rule that matches wins (docs/content-manager/ux.md section 1). */
+/**
+ * The status badge of a queue row. The first rule that matches wins (docs/content-manager/ux.md section 1),
+ * with one change: a post whose every network is skipped is "skipped" before the approval rules, so Skip
+ * post moves a pending or approved post out of Needs you.
+ */
 export function postBadge(
   post: Pick<ContentPostView, "approvalState" | "scheduledFor" | "variants">,
   now: Date,
@@ -77,12 +81,12 @@ export function postBadge(
     count,
     timePassed,
   });
+  if (all.length > 0 && all.every((status) => status === "skipped")) return badge("skipped", "outline");
   if (post.approvalState === "pending") return badge("pending", "primary-light");
   if (count > 0) return badge("failed", "destructive-light");
   if (all.includes("publishing")) return badge("publishing", "secondary");
   if (all.includes("queued")) return badge("queued", null);
   if (post.approvalState === "approved" && post.scheduledFor === null) return badge("approved", "primary-light");
-  if (all.length > 0 && all.every((status) => status === "skipped")) return badge("skipped", "outline");
   const sent = all.filter((status) => status !== "skipped");
   if (sent.length > 0 && sent.every((status) => status === "published")) return badge("published", "success-light");
   return badge("draft", "secondary");
@@ -155,11 +159,11 @@ export function queueSection(
   return `day:${day}`;
 }
 
-/** The time of the last network that has the post, else the post time, else its last change. */
-function doneAt(post: Pick<ContentPostView, "scheduledFor" | "updatedAt" | "variants">): number {
+/** The time of the last network that has the post; a skipped post: when the user skipped it (its last change). */
+function doneAt(post: Pick<ContentPostView, "updatedAt" | "variants">): number {
   const published = post.variants.flatMap((variant) => (variant.publishedAt ? [Date.parse(variant.publishedAt)] : []));
   if (published.length > 0) return Math.max(...published);
-  return Date.parse(post.scheduledFor ?? post.updatedAt);
+  return Date.parse(post.updatedAt);
 }
 
 export interface ContentQueueGroup<T> {

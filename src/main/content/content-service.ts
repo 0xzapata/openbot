@@ -287,6 +287,8 @@ export class ContentService {
     switch (input.action) {
       case "approve":
         return contentPostView(yield* storeCall(() => this.#store.approvePost(postId, now)));
+      case "unapprove":
+        return contentPostView(yield* storeCall(() => this.#store.unapprovePost(postId, now)));
       case "unschedule":
         return contentPostView(yield* storeCall(() => this.#store.unschedulePost(postId, now)));
       case "retry":

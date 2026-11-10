@@ -9,6 +9,7 @@ export const messages = defineMessages("error.content", {
   "error.content.noVariant": "This post has no variant for that network.",
   "error.content.notPending": "This post does not wait for approval.",
   "error.content.approveFirst": "Approve this post first.",
+  "error.content.cannotUnapprove": "This post is no longer approved, or a network already has it.",
   "error.content.timeInFuture": "The time must be in the future.",
   "error.content.publishing": "OpenBot is posting this now. Wait until it ends.",
   "error.content.published": "This post is already on a network, so it cannot change.",

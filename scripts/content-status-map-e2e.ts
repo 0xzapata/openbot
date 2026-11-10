@@ -18,7 +18,9 @@ import {
   type ContentVariantStatus,
   contentPostStatus,
 } from "@openbot/contracts/ipc-content";
+import { en } from "@openbot/i18n";
 import {
+  CONTENT_STATUS_LABEL,
   contentPostLocked,
   networkRow,
   postBadge,
@@ -143,6 +145,22 @@ try {
         "success-light",
       ],
       ["draft", post({ statuses: { linkedin: "draft" } }), "draft", "secondary"],
+      // Rule 2 wins over a queued network: one network failed while another waits.
+      [
+        "failed and queued",
+        post({ scheduledFor: at(-1), statuses: { x: "failed", linkedin: "queued" } }),
+        "failed",
+        "destructive-light",
+        1,
+      ],
+      // All skipped wins over the approval rules, so Skip post moves the post out of Needs you.
+      [
+        "pending, all skipped",
+        post({ approvalState: "pending", scheduledFor: at(24), statuses: {} }),
+        "skipped",
+        "outline",
+      ],
+      ["approved no time, all skipped", post({ approvalState: "approved", statuses: {} }), "skipped", "outline"],
       // A post with a published and a draft network is not done.
       ["partly published", post({ statuses: { x: "published", linkedin: "draft" } }), "draft", "secondary"],
     ];
@@ -152,6 +170,12 @@ try {
       assert.equal(badge.variant, variant, name);
       if (count !== undefined) assert.equal(badge.count, count, name);
       assert.equal(badge.timePassed, false, name);
+      // The badge text is a catalog key.
+      const label =
+        badge.kind === "failed" || badge.kind === "queued"
+          ? `content.status.${badge.kind}`
+          : CONTENT_STATUS_LABEL[badge.kind];
+      assert.ok(label in en, `${name}: ${label} is a catalog key`);
     }
     return { cases: cases.length };
   });
@@ -186,6 +210,7 @@ try {
         status,
       );
       assert.equal(chip.statusKey, `content.variant.${status}`);
+      assert.ok(chip.statusKey in en && chip.labelKey in en, `${status}: the chip keys are catalog keys`);
     }
     const pending = variantChip("pending");
     assert.deepEqual(
@@ -220,6 +245,8 @@ try {
       ["draft", post({ statuses: { linkedin: "draft" } }), "drafts"],
       ["published", post({ scheduledFor: at(-48), statuses: { x: "published" } }), "done"],
       ["skipped", post({ scheduledFor: at(-72), statuses: {} }), "done"],
+      ["pending, all skipped", post({ approvalState: "pending", scheduledFor: at(24), statuses: {} }), "done"],
+      ["approved no time, all skipped", post({ approvalState: "approved", statuses: {} }), "done"],
     ];
     for (const [name, example, section] of cases) assert.equal(queueSection(example, NOW, ZONE), section, name);
     return { cases: cases.length };
@@ -239,6 +266,8 @@ try {
     const doneNew = post({ scheduledFor: at(-48), statuses: { x: "published" }, publishedAt: at(-47) });
     // Published late: its publish time, not its post time, places it.
     const doneLate = post({ scheduledFor: at(-96), statuses: { x: "published" }, publishedAt: at(-3) });
+    // Skipped just now: the skip time (its last change), not its far-off post time, places it.
+    const doneSkipped = post({ scheduledFor: at(200), statuses: {}, updatedAt: at(-2) });
     const groups = queueSections(
       [
         doneOld,
@@ -253,6 +282,7 @@ try {
         needsOld,
         todayEarly,
         doneLate,
+        doneSkipped,
       ],
       NOW,
       ZONE,
@@ -265,7 +295,7 @@ try {
       ["day:2026-11-12", [thursday.id]],
       ["day:2026-11-13", [friday.id]],
       ["drafts", [draftNew.id, draftOld.id]],
-      ["done", [doneLate.id, doneNew.id, doneOld.id]],
+      ["done", [doneSkipped.id, doneLate.id, doneNew.id, doneOld.id]],
     ]);
     // An empty section is left out.
     assert.deepEqual(

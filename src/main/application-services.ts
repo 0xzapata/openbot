@@ -1957,8 +1957,13 @@ export async function createApplicationServices({
   // The schedule triggers of workflows share the routine timer; built after the workflows below.
   let workflowTriggers: WorkflowTriggers | null = null;
   // The content publisher shares the routine timer. A user write that queues a post plans the timer again;
-  // `service` is built below, and nothing queues a post before it exists.
-  const contentStore = new ContentStore(store.database, () => service.armRoutines(), forwardContentChanged);
+  // `service` and `contentAccounts` are built below, and nothing queues a post before they exist.
+  const contentStore = new ContentStore(
+    store.database,
+    () => service.armRoutines(),
+    forwardContentChanged,
+    () => contentAccounts.platforms,
+  );
   // Before the timer can fire: a post that a restart cut off fails and waits for the user.
   contentStore.recoverInterrupted();
   const contentAdapterOptions = {

@@ -45,6 +45,7 @@ export const messages = defineMessages("content", {
   "content.chip.label": "{network}: {status}",
   "content.chip.skip": "Skip {network}",
   "content.chip.include": "Post to {network}",
+  "content.chip.error": "{label}. {reason}",
   "content.variant.draft": "Draft",
   "content.variant.pending": "Needs approval",
   "content.variant.queued": "Scheduled",
@@ -60,11 +61,13 @@ export const messages = defineMessages("content", {
   "content.action.restore": "Restore",
   "content.action.unschedule": "Unschedule",
   "content.action.publishNow": "Publish now",
+  "content.pickTime.label": "Pick a time for {title}",
   "content.action.more": "More actions for {title}",
 
   // Toasts
   "content.toast.skipped": "Post skipped",
   "content.toast.approved": "Approved for {time}",
+  "content.toast.approvedNoTime": "Approved. Pick a time to schedule it.",
   "content.toast.undo": "Undo",
 
   // Confirm dialogs
@@ -167,6 +170,7 @@ export const messages = defineMessages("content", {
   "content.accounts.title": "Accounts",
   "content.accounts.description": "OpenBot posts with these accounts. Sign-in tokens stay on this computer.",
   "content.accounts.loading": "Loading accounts",
+  "content.accounts.loadFailed": "Could not load the accounts.",
   "content.accounts.status.connected": "Connected",
   "content.accounts.status.signedOut": "Sign in again",
   "content.accounts.status.unavailable": "Not available yet",

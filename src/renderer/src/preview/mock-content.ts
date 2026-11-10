@@ -190,6 +190,12 @@ export function createMockContent(): ContentDesktopApi {
   const setStatuses = (target: ContentPostView, from: ContentVariantStatus, to: ContentVariantStatus) => {
     for (const item of target.variants) if (item.status === from) item.status = to;
   };
+  /** As main: a draft of a network that this version cannot post to is skipped, not queued. */
+  const queueDrafts = (target: ContentPostView) => {
+    for (const item of target.variants)
+      if (item.status === "draft")
+        item.status = item.platform === "x" || item.platform === "linkedin" ? "queued" : "skipped";
+  };
   return {
     listAccounts: async () => state(),
     beginConnect: async ({ platform }) => {
@@ -246,8 +252,10 @@ export function createMockContent(): ContentDesktopApi {
       write(input.postId, (target) => {
         if (input.action === "approve") {
           target.approvalState = "approved";
-          if (target.scheduledFor && target.scheduledFor > new Date().toISOString())
-            setStatuses(target, "draft", "queued");
+          if (target.scheduledFor && target.scheduledFor > new Date().toISOString()) queueDrafts(target);
+        } else if (input.action === "unapprove") {
+          target.approvalState = "pending";
+          setStatuses(target, "queued", "draft");
         } else if (input.action === "unschedule") {
           target.scheduledFor = null;
           setStatuses(target, "queued", "draft");
@@ -273,12 +281,12 @@ export function createMockContent(): ContentDesktopApi {
     schedulePost: async ({ postId, scheduledFor }) =>
       write(postId, (target) => {
         target.scheduledFor = scheduledFor;
-        setStatuses(target, "draft", "queued");
+        queueDrafts(target);
       }),
     publishNow: async ({ postId }) =>
       write(postId, (target) => {
         target.scheduledFor = new Date().toISOString();
-        setStatuses(target, "draft", "queued");
+        queueDrafts(target);
       }),
     calendar: async ({ from, to }) => ({
       from,

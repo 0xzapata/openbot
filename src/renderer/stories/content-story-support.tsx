@@ -55,7 +55,7 @@ export function ContentStory(props: { options?: ContentStoryOptions }) {
     else if (pick)
       void api.listPosts({}).then((posts) => {
         const post = pick(posts);
-        if (post) content.openComposer(post.id);
+        if (post) content.openComposer(post);
       });
     return dispose;
   });

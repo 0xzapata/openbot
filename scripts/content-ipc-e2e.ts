@@ -161,6 +161,7 @@ try {
       arms += 1;
     },
     (event) => events.push(event),
+    () => accounts.platforms,
   );
   const adapterOptions = { fetch: fakeFetch, now, sleep: async () => {} };
   let receive: ((url: URL) => CallbackAnswer) | null = null;
@@ -402,7 +403,9 @@ try {
     );
     assert.deepEqual(unscheduleEvents, [{ postId: queued.id }]);
     assert.equal(unscheduled.scheduledFor, null, "The time is removed.");
-    assert.ok(unscheduled.variants.every((variant) => variant.status === "draft"));
+    assert.equal(statusOf(unscheduled, "x"), "draft");
+    assert.equal(statusOf(unscheduled, "linkedin"), "draft");
+    assert.equal(statusOf(unscheduled, "instagram"), "skipped", "A network with no adapter was skipped at once.");
     await call.post(endpoints.updatePost.channel, {
       postId: queued.id,
       action: "edit",
@@ -420,47 +423,74 @@ try {
 
   let pendingId = "";
 
-  await step("4. Approve queues a pending post with a future time; an edit keeps it pending", async () => {
-    const future = new Date(clock.getTime() + 2 * 60 * 60_000).toISOString();
-    const agent = await runCauseEffect(
-      agents.createAgent({ name: "Herald", description: "Writes posts", avatarSeed: "herald", avatarHue: null }),
-    );
-    const pending = store.createPost(
-      {
-        body: "Proposed",
-        media: null,
-        approvalState: "pending",
-        scheduledFor: future,
-        timezone: "UTC",
-        authorAgentId: agent.id,
-        variants: {},
-      },
-      clock,
-    );
-    pendingId = pending.id;
-    createdIds.push(pending.id);
-    await refused(
-      endpoints.schedulePost.channel,
-      { postId: pending.id, scheduledFor: future },
-      "error.content.approveFirst",
-    );
-    const edited = await call.post(endpoints.updatePost.channel, {
-      postId: pending.id,
-      action: "edit",
-      body: "Proposed, edited",
-    });
-    assert.equal(edited.approvalState, "pending");
-    assert.equal(edited.body, "Proposed, edited");
-    const { value: approved, fired } = await changesDuring(() =>
-      call.post(endpoints.updatePost.channel, { postId: pending.id, action: "approve" }),
-    );
-    assert.deepEqual(fired, [{ postId: pending.id }]);
-    assert.equal(approved.approvalState, "approved");
-    assert.equal(approved.status, "queued");
-    assert.ok(approved.variants.every((variant) => variant.status === "queued"));
-    await refused(endpoints.updatePost.channel, { postId: pending.id, action: "approve" }, "error.content.notPending");
-    return { status: approved.status };
-  });
+  await step(
+    "4. Approve queues a pending post with a future time; unapprove undoes it; an edit keeps it pending",
+    async () => {
+      const future = new Date(clock.getTime() + 2 * 60 * 60_000).toISOString();
+      const agent = await runCauseEffect(
+        agents.createAgent({ name: "Herald", description: "Writes posts", avatarSeed: "herald", avatarHue: null }),
+      );
+      const pending = store.createPost(
+        {
+          body: "Proposed",
+          media: null,
+          approvalState: "pending",
+          scheduledFor: future,
+          timezone: "UTC",
+          authorAgentId: agent.id,
+          variants: {},
+        },
+        clock,
+      );
+      pendingId = pending.id;
+      createdIds.push(pending.id);
+      await refused(
+        endpoints.schedulePost.channel,
+        { postId: pending.id, scheduledFor: future },
+        "error.content.approveFirst",
+      );
+      const edited = await call.post(endpoints.updatePost.channel, {
+        postId: pending.id,
+        action: "edit",
+        body: "Proposed, edited",
+      });
+      assert.equal(edited.approvalState, "pending");
+      assert.equal(edited.body, "Proposed, edited");
+      const { value: approved, fired } = await changesDuring(() =>
+        call.post(endpoints.updatePost.channel, { postId: pending.id, action: "approve" }),
+      );
+      assert.deepEqual(fired, [{ postId: pending.id }]);
+      assert.equal(approved.approvalState, "approved");
+      assert.equal(approved.status, "queued");
+      assert.equal(statusOf(approved, "x"), "queued");
+      assert.equal(statusOf(approved, "linkedin"), "queued");
+      for (const platform of ["instagram", "threads", "facebook_page", "youtube"])
+        assert.equal(statusOf(approved, platform), "skipped", `${platform} has no adapter, so approve skips it.`);
+      await refused(
+        endpoints.updatePost.channel,
+        { postId: pending.id, action: "approve" },
+        "error.content.notPending",
+      );
+
+      const { value: undone, fired: undoEvents } = await changesDuring(() =>
+        call.post(endpoints.updatePost.channel, { postId: pending.id, action: "unapprove" }),
+      );
+      assert.deepEqual(undoEvents, [{ postId: pending.id }]);
+      assert.equal(undone.approvalState, "pending");
+      assert.equal(undone.scheduledFor, future, "The time stays as the proposal.");
+      assert.equal(statusOf(undone, "x"), "draft");
+      assert.equal(statusOf(undone, "linkedin"), "draft");
+      assert.equal(statusOf(undone, "instagram"), "skipped");
+      await refused(
+        endpoints.updatePost.channel,
+        { postId: pending.id, action: "unapprove" },
+        "error.content.cannotUnapprove",
+      );
+      const again = await call.post(endpoints.updatePost.channel, { postId: pending.id, action: "approve" });
+      assert.equal(again.status, "queued");
+      return { status: approved.status, undo: undone.approvalState };
+    },
+  );
 
   await step("5. publishNow publishes on X at the next pass; the publisher writes fire changed events", async () => {
     const created = await call.post(endpoints.createPost.channel, {
@@ -519,6 +549,11 @@ try {
       endpoints.updatePost.channel,
       { postId: created.id, action: "edit", body: "Changed" },
       "error.content.published",
+    );
+    await refused(
+      endpoints.updatePost.channel,
+      { postId: created.id, action: "unapprove" },
+      "error.content.cannotUnapprove",
     );
     return { error: x?.error };
   });
