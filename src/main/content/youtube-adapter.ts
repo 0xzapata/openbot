@@ -38,8 +38,15 @@ const CATEGORY_ID = "22";
 const CHECK_AFTER_MS = 60_000;
 /** A video is up to 1 GB, so its PUT can take long on a slow line. */
 const VIDEO_UPLOAD_TIMEOUT_MS = 60 * 60_000;
-/** Each of these is one more PUT after a server error or a lost line. */
+/** Each of these is one more PUT, or one more status query of the session, after a server error or a lost line. */
 const UPLOAD_ATTEMPTS = 3;
+/** Reasons of a 403 or 400 that mean "later", not "never". */
+const RATE_LIMIT_REASONS = new Set([
+  "quotaExceeded",
+  "rateLimitExceeded",
+  "userRateLimitExceeded",
+  "uploadLimitExceeded",
+]);
 
 const pendingSchema = z.object({ videoId: z.string(), startedAt: z.string() });
 
@@ -139,33 +146,52 @@ export class YouTubeAdapter implements ContentAdapter {
     // large for one request. Add chunks if users post files above the 1 GB cap of the composer.
     let session: string | null = null;
     let from = 0;
+    // `unknown`: the last answer did not say how much the session has, so YouTube may have the whole video.
+    let unknown = false;
+    let waitMs: number | null = null;
+    const total = media.bytes.byteLength;
     for (let attempt = 0; attempt < UPLOAD_ATTEMPTS; attempt += 1) {
-      if (session === null) {
-        session = yield* this.#startSession(input.accessToken, metadata, media);
-        from = 0;
+      let answer: SessionState;
+      if (unknown && session !== null) {
+        // 1 s, 2 s, ... or `Retry-After`. ponytail: the wait holds this publish, at most 2 waits of up to 60 s;
+        // move it to the timer if the attempts grow.
+        yield* Effect.promise(() => this.#options.sleep(waitMs ?? 1_000 * 2 ** (attempt - 1)));
+        answer = yield* this.#sessionState(input.accessToken, session, total);
+      } else {
+        if (session === null) {
+          session = yield* this.#startSession(input.accessToken, metadata, media);
+          from = 0;
+        }
+        const put = yield* contentRequest(this.#options, NETWORK, session, {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${input.accessToken}`,
+            "Content-Type": media.mimeType,
+            ...(from > 0 ? { "Content-Range": `bytes ${from}-${total - 1}/${total}` } : {}),
+          },
+          body: from > 0 ? media.bytes.subarray(from) : media.bytes,
+          timeoutMs: VIDEO_UPLOAD_TIMEOUT_MS,
+        }).pipe(Effect.result);
+        if (put._tag === "Success" && put.success.status < 500) {
+          const body = yield* responseJson(put.success);
+          if (!put.success.ok) return yield* youTubeError(put.success, body);
+          return yield* this.#uploaded(body);
+        }
+        // A server error or a lost line: ask the session how much it has.
+        answer = yield* this.#sessionState(input.accessToken, session, total);
       }
-      const total = media.bytes.byteLength;
-      const put = yield* contentRequest(this.#options, NETWORK, session, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${input.accessToken}`,
-          "Content-Type": media.mimeType,
-          ...(from > 0 ? { "Content-Range": `bytes ${from}-${total - 1}/${total}` } : {}),
-        },
-        body: from > 0 ? media.bytes.slice(from) : media.bytes,
-        timeoutMs: VIDEO_UPLOAD_TIMEOUT_MS,
-      }).pipe(Effect.result);
-      if (put._tag === "Success" && put.success.status < 500) {
-        const body = yield* responseJson(put.success);
-        if (!put.success.ok) return yield* youTubeError(put.success, body);
-        return yield* this.#uploaded(body);
-      }
-      // A server error or a lost line: ask the session how much it has.
-      const answer = yield* this.#sessionState(input.accessToken, session, total);
+      unknown = answer.kind === "unknown";
+      waitMs = answer.kind === "unknown" ? answer.retryAfterMs : null;
       if (answer.kind === "done") return yield* this.#uploaded(answer.body);
       if (answer.kind === "restart") session = null;
-      else from = answer.from;
+      else if (answer.kind === "resume") from = answer.from;
     }
+    if (unknown)
+      return yield* new ContentAdapterError({
+        code: "unknown-result",
+        status: null,
+        message: sourceText("error.content.noAnswer", { network: NETWORK }),
+      });
     return yield* new ContentAdapterError({
       code: "server",
       status: null,
@@ -191,7 +217,8 @@ export class YouTubeAdapter implements ContentAdapter {
     });
     if (!response.ok) return yield* youTubeError(response, yield* responseJson(response));
     const location = response.headers.get("location");
-    if (!location)
+    // The video and the Bearer token go to this address: only an https address of Google is taken.
+    if (!location || !isGoogleApisUrl(location))
       return yield* new ContentAdapterError({
         code: "server",
         status: response.status,
@@ -201,25 +228,34 @@ export class YouTubeAdapter implements ContentAdapter {
   });
 
   /**
-   * The state of an upload session after a failed PUT. 308 with `Range: bytes=0-N` resumes at N+1; a
-   * 404 or 410 session has ended and the upload starts again. A lost line counts as "start at 0".
+   * The state of an upload session after a failed PUT (Google's resumable-upload guide). 308 with
+   * `Range: bytes=0-N` resumes at N+1, and 308 with no `Range` at 0. A 404 or 410 session has ended and the
+   * upload starts again. A lost line or a 5xx says nothing: ask again after a wait.
    */
   readonly #sessionState = Effect.fn("YouTubeAdapter.sessionState")(function* (
     this: YouTubeAdapter,
     accessToken: string,
     session: string,
     total: number,
-  ) {
+  ): Effect.fn.Return<SessionState> {
     const response = yield* contentRequest(this.#options, NETWORK, session, {
       method: "PUT",
       headers: { Authorization: `Bearer ${accessToken}`, "Content-Range": `bytes */${total}` },
     }).pipe(Effect.orElseSucceed(() => null));
-    if (!response) return { kind: "resume", from: 0 } as const;
+    if (!response) return { kind: "unknown", retryAfterMs: null };
     if (response.status === 200 || response.status === 201)
-      return { kind: "done", body: yield* responseJson(response) } as const;
-    if (response.status === 404 || response.status === 410) return { kind: "restart" } as const;
-    const range = /^bytes=0-(\d+)$/u.exec(response.headers.get("range") ?? "");
-    return { kind: "resume", from: range ? Number(range[1]) + 1 : 0 } as const;
+      return { kind: "done", body: yield* responseJson(response) };
+    if (response.status === 404 || response.status === 410) return { kind: "restart" };
+    if (response.status === 308) {
+      const range = /^bytes=0-(\d+)$/u.exec(response.headers.get("range") ?? "");
+      return { kind: "resume", from: range ? Number(range[1]) + 1 : 0 };
+    }
+    // ponytail: `Retry-After` in seconds only, capped at 60 s; an HTTP date falls back to the backoff.
+    const seconds = Number(response.headers.get("retry-after"));
+    return {
+      kind: "unknown",
+      retryAfterMs: Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 60) * 1000 : null,
+    };
   });
 
   readonly #uploaded = Effect.fn("YouTubeAdapter.uploaded")(function* (this: YouTubeAdapter, body: unknown) {
@@ -247,11 +283,28 @@ export class YouTubeAdapter implements ContentAdapter {
       });
     const url = new URL(VIDEOS_URL);
     url.search = formBody({ part: "status,processingDetails", id: pending.videoId });
+    // YouTube has the video, so a status read that fails for a while does not fail the post: a retry would
+    // upload a second copy. Read again until the 24 h cap.
+    const later = () =>
+      pendingExpired(pending.startedAt, this.#options.now())
+        ? Effect.fail(gaveUp(NETWORK))
+        : Effect.succeed(processingPending(pending, CHECK_AFTER_MS));
     const response = yield* contentRequest(this.#options, NETWORK, url.toString(), {
       headers: { Authorization: `Bearer ${input.accessToken}` },
-    });
+    }).pipe(Effect.orElseSucceed(() => null));
+    if (!response) return yield* later();
     const body = yield* responseJson(response);
-    if (!response.ok) return yield* youTubeError(response, body);
+    if (!response.ok) {
+      const reason = errorReason(body);
+      if (
+        response.status >= 500 ||
+        response.status === 429 ||
+        (response.status === 403 &&
+          (reason === "quotaExceeded" || reason === "rateLimitExceeded" || reason === "userRateLimitExceeded"))
+      )
+        return yield* later();
+      return yield* youTubeError(response, body);
+    }
     const video = isDynamicRecord(body) && Array.isArray(body.items) ? body.items[0] : null;
     const status = isDynamicRecord(video) && isDynamicRecord(video.status) ? video.status : {};
     const processing =
@@ -287,6 +340,29 @@ export class YouTubeAdapter implements ContentAdapter {
   });
 }
 
+type SessionState =
+  | { kind: "done"; body: unknown }
+  | { kind: "restart" }
+  | { kind: "resume"; from: number }
+  | { kind: "unknown"; retryAfterMs: number | null };
+
+/** An https address on `googleapis.com` or one of its subdomains. */
+function isGoogleApisUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && (url.hostname === "googleapis.com" || url.hostname.endsWith(".googleapis.com"));
+  } catch {
+    return false;
+  }
+}
+
+/** The first `errors[].reason` of a Google error answer. */
+function errorReason(body: unknown): string | null {
+  const error = isDynamicRecord(body) && isDynamicRecord(body.error) ? body.error : {};
+  const first = Array.isArray(error.errors) && isDynamicRecord(error.errors[0]) ? error.errors[0] : {};
+  return typeof first.reason === "string" ? first.reason : null;
+}
+
 /** The typed error of a Google answer: `{ error: { code, message, errors: [{ reason }] } }`, or OAuth `{ error }`. */
 function youTubeError(
   response: Response,
@@ -296,14 +372,14 @@ function youTubeError(
   const status = response.status;
   const record = isDynamicRecord(body) ? body : {};
   const error = isDynamicRecord(record.error) ? record.error : {};
-  const first = Array.isArray(error.errors) && isDynamicRecord(error.errors[0]) ? error.errors[0] : {};
-  const reason = typeof first.reason === "string" ? first.reason : null;
+  const reason = errorReason(body);
   const text = shortProviderText(error.message) ?? shortProviderText(record.error_description);
   const fail = (code: ContentAdapterError["code"], message: string) =>
     Effect.fail(new ContentAdapterError({ code, status, message }));
   if (status === 401 || record.error === "invalid_grant" || (tokenRequest && status === 400))
     return fail("signed-out", sourceText("error.content.signInAgainYouTube"));
-  if (status === 429 || (status === 403 && (reason === "quotaExceeded" || reason === "uploadLimitExceeded")))
+  // Google lists `uploadLimitExceeded` as 400 and the quota reasons as 403: take them on any 4xx.
+  if (status === 429 || (status >= 400 && status < 500 && reason !== null && RATE_LIMIT_REASONS.has(reason)))
     return fail("rate-limited", sourceText("error.content.rateLimitedLater", { network: NETWORK }));
   if (status >= 500)
     return fail("server", sourceText("error.content.serverError", { network: NETWORK, status: String(status) }));

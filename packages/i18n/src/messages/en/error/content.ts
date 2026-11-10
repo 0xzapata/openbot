@@ -88,7 +88,7 @@ export const messages = defineMessages("error.content", {
   "error.content.processingTimeout": "{network} did not finish the post in 24 hours. Check {network} before you retry.",
   "error.content.uploadIncomplete": "The upload to {network} did not finish. Try again.",
   "error.content.mediaHostUploadRefused":
-    "The image host refused the upload ({status}). Check the access key, the secret, the endpoint and the bucket.",
+    "The image host refused the upload ({status}). Check the access key, the secret, the endpoint, the bucket, and the date and time of this computer.",
   "error.content.mediaHostNotPublic":
     "The image host did not show the file at the public base URL ({status}). Turn on public access for the bucket (the R2 Public Development URL, or a custom domain on the bucket), and give that URL as the public base URL.",
   "error.content.mediaHostBytesDiffer":

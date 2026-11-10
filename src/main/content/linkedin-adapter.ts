@@ -22,6 +22,7 @@ import {
   shortProviderText,
   tokensOf,
 } from "./content-adapter";
+import { gaveUp, pendingExpired, processingPending } from "./meta-adapters";
 
 const AUTHORIZE_URL = "https://www.linkedin.com/oauth/v2/authorization";
 const TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken";
@@ -166,12 +167,10 @@ export class LinkedInAdapter implements ContentAdapter {
       if (yield* this.#imageAvailable(input.accessToken, value.image))
         return yield* this.#createPost(input.accessToken, author, input.body, value.image);
     }
-    const pending: ContentPublishResult = {
-      kind: "pending",
-      pendingData: JSON.stringify({ image: value.image, author, text: input.body }),
-      checkAfterMs: IMAGE_CHECK_AFTER_MS,
-    };
-    return pending;
+    return processingPending(
+      { image: value.image, author, text: input.body, startedAt: this.#options.now().toISOString() },
+      IMAGE_CHECK_AFTER_MS,
+    );
   });
 
   readonly checkPostStatus = Effect.fn("LinkedInAdapter.checkPostStatus")(function* (
@@ -186,12 +185,10 @@ export class LinkedInAdapter implements ContentAdapter {
         message: sourceText("error.content.uploadStateInvalid", { network: NETWORK }),
       });
     if (!(yield* this.#imageAvailable(input.accessToken, pending.image))) {
-      const again: ContentPublishResult = {
-        kind: "pending",
-        pendingData: input.pendingData,
-        checkAfterMs: IMAGE_CHECK_AFTER_MS,
-      };
-      return again;
+      // Pending data from before `startedAt` starts its 24 h now.
+      const startedAt = pending.startedAt ?? this.#options.now().toISOString();
+      if (pendingExpired(startedAt, this.#options.now())) return yield* gaveUp(NETWORK);
+      return processingPending({ ...pending, startedAt }, IMAGE_CHECK_AFTER_MS);
     }
     return yield* this.#createPost(input.accessToken, pending.author, pending.text, pending.image);
   });
@@ -277,7 +274,13 @@ function restHeaders(accessToken: string): Record<string, string> {
   };
 }
 
-const pendingSchema = z.object({ image: z.string(), author: z.string(), text: z.string() });
+// `startedAt` is optional: pending data from before it has none.
+const pendingSchema = z.object({
+  image: z.string(),
+  author: z.string(),
+  text: z.string(),
+  startedAt: z.string().optional(),
+});
 
 /** The data of an image that LinkedIn still processes, or null when it is not valid. */
 function decodePending(value: string): z.infer<typeof pendingSchema> | null {

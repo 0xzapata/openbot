@@ -49,6 +49,7 @@ const { LinkedInAdapter } = await import("../src/main/content/linkedin-adapter")
 const { InstagramAdapter } = await import("../src/main/content/meta-adapters");
 const { R2MediaHost } = await import("../src/main/content/content-media-host");
 const { XAdapter } = await import("../src/main/content/x-adapter");
+const { YouTubeAdapter } = await import("../src/main/content/youtube-adapter");
 const { contentIpcHandlers } = await import("../src/main/ipc/content-handlers");
 const { registerIpcGroup } = await import("../src/main/ipc/define-ipc-group");
 const { decodeVoid } = await import("../src/preload/app-decoding");
@@ -209,7 +210,12 @@ try {
     store,
     cipher,
     appsPath: join(state, "openbot-content-apps-v1.json"),
-    adapters: [new XAdapter(adapterOptions), new LinkedInAdapter(adapterOptions), new InstagramAdapter(adapterOptions)],
+    adapters: [
+      new XAdapter(adapterOptions),
+      new LinkedInAdapter(adapterOptions),
+      new InstagramAdapter(adapterOptions),
+      new YouTubeAdapter(adapterOptions),
+    ],
     mediaHostPath: join(state, "openbot-content-media-host-v1.json"),
     mediaHost: (settings) => new R2MediaHost({ fetch: ipcFetch, now, settings }),
     openExternal: async (url) => {
@@ -223,7 +229,13 @@ try {
     now,
   });
   const publisher = new ContentPublisher({ store, accounts, now });
-  const service = new ContentService({ store, accounts, drafts: mailbox, now });
+  const service = new ContentService({
+    store,
+    accounts,
+    drafts: mailbox,
+    now,
+    releaseHostedMedia: (variantId) => publisher.releaseHostedMedia(variantId),
+  });
   registerIpcGroup("content", contentIpcHandlers({ content: service }).content);
 
   /** One renderer call, through the handler that `handleTrusted` gave to ipcMain. */
@@ -311,7 +323,7 @@ try {
     );
     assert.deepEqual(
       initial.networks.filter((network) => network.available).map((network) => network.platform),
-      ["x", "linkedin", "instagram"],
+      ["x", "linkedin", "instagram", "youtube"],
     );
     assert.equal(initial.networks.find((network) => network.platform === "instagram")?.app.needsSecret, true);
     assert.deepEqual(initial.mediaHost, {
@@ -322,6 +334,8 @@ try {
       hasKeys: false,
     });
     assert.equal(initial.networks.find((network) => network.platform === "linkedin")?.app.needsSecret, true);
+    // Google's token endpoint asks a Desktop client for its secret, also with PKCE.
+    assert.equal(initial.networks.find((network) => network.platform === "youtube")?.app.needsSecret, true);
     assert.equal(initial.connecting, null);
 
     await refused(endpoints.beginConnect.channel, { platform: "x" }, "error.content.addApp");
@@ -329,6 +343,11 @@ try {
     await refused(
       endpoints.beginConnect.channel,
       { platform: "linkedin", clientId: "li-id" },
+      "error.content.addSecret",
+    );
+    await refused(
+      endpoints.beginConnect.channel,
+      { platform: "youtube", clientId: "yt-id.apps.googleusercontent.com" },
       "error.content.addSecret",
     );
 
@@ -597,7 +616,8 @@ try {
       // Instagram has an adapter and an image host here, but its own variant has no image: the publish
       // refuses it at its time, not the approve.
       assert.equal(statusOf(approved, "instagram"), "queued");
-      for (const platform of ["threads", "facebook_page", "youtube"])
+      assert.equal(statusOf(approved, "youtube"), "queued");
+      for (const platform of ["threads", "facebook_page"])
         assert.equal(statusOf(approved, platform), "skipped", `${platform} has no adapter, so approve skips it.`);
       await refused(
         endpoints.updatePost.channel,

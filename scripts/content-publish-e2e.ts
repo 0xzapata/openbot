@@ -21,6 +21,7 @@ import {
   type ContentPlatform,
   contentPostStatus,
 } from "@openbot/contracts/ipc-content";
+import { sourceText } from "@openbot/i18n/source";
 import { teeLogLines } from "@openbot/logging";
 import { Effect } from "effect";
 import { AgentStore } from "../src/backend/agent-store";
@@ -31,7 +32,7 @@ import { CONTENT_MEDIA_HOST_FILE, CONTENT_REDIRECT_URI, ContentAccounts } from "
 import type { ContentFetch } from "../src/main/content/content-adapter";
 import { R2MediaHost } from "../src/main/content/content-media-host";
 import { ContentPublisher } from "../src/main/content/content-publisher";
-import { contentPostView } from "../src/main/content/content-service";
+import { ContentService, contentPostView } from "../src/main/content/content-service";
 import { escapeLinkedInCommentary, LINKEDIN_API_VERSION, LinkedInAdapter } from "../src/main/content/linkedin-adapter";
 import { FacebookPageAdapter, InstagramAdapter, ThreadsAdapter } from "../src/main/content/meta-adapters";
 import { X_SCOPES, XAdapter } from "../src/main/content/x-adapter";
@@ -956,15 +957,16 @@ try {
     const R2_SECRET = "test-r2-secret-access-key-0123456789";
     const bucket = new Map<string, Buffer>();
     let failDeletes = 0;
-    const r2Log: Array<{ method: string; key: string }> = [];
+    // `bucket` is the bucket of an S3 request, or "public" for a read over the public URL.
+    const r2Log: Array<{ method: string; key: string; bucket: string }> = [];
     const sent4: Array<{ route: string; body: string }> = [];
     const answers = { ig: "IN_PROGRESS", th: "FINISHED", yt: "processing" };
     const fetch4: ContentFetch = async (url, init) => {
       const parsed = new URL(url);
       const method = init.method ?? "GET";
       if (parsed.host === R2) {
-        const key = decodeURIComponent(parsed.pathname.replace(/^\/content-bucket\//u, ""));
-        r2Log.push({ method, key });
+        const key = decodeURIComponent(parsed.pathname.replace(/^\/[^/]+\//u, ""));
+        r2Log.push({ method, key, bucket: parsed.pathname.split("/")[1] ?? "" });
         if (method === "PUT") {
           assert.ok(init.body instanceof Uint8Array);
           bucket.set(key, Buffer.from(init.body));
@@ -978,7 +980,7 @@ try {
         return new Response(null, { status: 204 });
       }
       if (parsed.host === PUBLIC) {
-        r2Log.push({ method: "GET", key: parsed.pathname.slice(1) });
+        r2Log.push({ method: "GET", key: parsed.pathname.slice(1), bucket: "public" });
         const object = bucket.get(parsed.pathname.slice(1));
         return object ? new Response(new Uint8Array(object), { status: 200 }) : new Response(null, { status: 404 });
       }
@@ -1397,23 +1399,27 @@ try {
       },
     );
 
-    await step("20. A recorded key outside the content pattern is never deleted, and stays logged", async () => {
-      const post = queued2("instagram", photo);
-      const variant = variant2(post.id, "instagram");
-      assert.ok(content2.claimVariant(variant.id, null, clock));
-      content2.setHostedKey(variant.id, "user-assets/logo.png", clock);
-      content2.finishVariant(variant.id, { kind: "failed", code: "unknown-result", message: "x" }, clock);
-      r2Log.length = 0;
-      await Effect.runPromise(publisher2.releaseHostedMedia());
-      assert.equal(r2Log.length, 0, "No DELETE is sent.");
-      assert.equal(JSON.parse(pendingRow(variant.id) ?? "{}").hostedKey, "user-assets/logo.png");
-      assert.ok(logs.some((line) => line.includes("could not be removed") && line.includes("user-assets/logo.png")));
-      // Clear the bad row, so a later sweep in this run has nothing to try.
-      database2.connection
-        .prepare("UPDATE content_variants SET pending_data = NULL WHERE variant_id = ?")
-        .run(variant.id);
-      return { refused: "user-assets/logo.png" };
-    });
+    await step(
+      "20. A recorded key outside the content pattern is never deleted; it is cleared and logged",
+      async () => {
+        const post = queued2("instagram", photo);
+        const variant = variant2(post.id, "instagram");
+        assert.ok(content2.claimVariant(variant.id, null, clock));
+        content2.setHostedKey(variant.id, "user-assets/logo.png", clock);
+        content2.finishVariant(variant.id, { kind: "failed", code: "unknown-result", message: "x" }, clock);
+        r2Log.length = 0;
+        await Effect.runPromise(publisher2.releaseHostedMedia());
+        assert.equal(r2Log.length, 0, "No DELETE is sent.");
+        assert.equal(pendingRow(variant.id), null, "The record goes, so the next start does not try again.");
+        assert.ok(
+          logs.some(
+            (line) =>
+              line.includes("not a content key") && line.includes(variant.id) && line.includes("user-assets/logo.png"),
+          ),
+        );
+        return { refused: "user-assets/logo.png" };
+      },
+    );
 
     await step(
       "20b. Host gone while Instagram is queued: it fails at its time with no request; a later one waits; Retry publishes",
@@ -1454,6 +1460,162 @@ try {
         return { error: failed.error };
       },
     );
+
+    /** The service of the current build, with the publisher's release, as `application-services.ts` wires it. */
+    const service2 = () =>
+      new ContentService({
+        store: content2,
+        accounts: accounts2,
+        drafts: { resolveDraftFile: () => Effect.succeed(null) },
+        now,
+        releaseHostedMedia: (variantId) => publisher2.releaseHostedMedia(variantId),
+      });
+    const cleanupText = sourceText("error.content.mediaHostCleanup");
+    /** The message of a refused service call. */
+    const refusal = async (operation: Effect.Effect<unknown, { cause: unknown }>) => {
+      const error = await Effect.runPromise(Effect.flip(operation));
+      return error.cause instanceof Error ? error.cause.message : String(error.cause);
+    };
+    /** A Threads image post that is published, and whose object stays because its DELETE failed. */
+    const publishedWithKept = async () => {
+      const post = queued2("threads", pngPhoto);
+      clock = post.time;
+      answers.th = "IN_PROGRESS";
+      await pass2();
+      failDeletes = 1;
+      answers.th = "FINISHED";
+      clock = new Date(clock.getTime() + 30_000);
+      await pass2();
+      const done = variant2(post.id, "threads");
+      assert.equal(done.status, "published");
+      const key: string = JSON.parse(pendingRow(done.id) ?? "{}").hostedKey;
+      assert.ok(bucket.has(key));
+      return { postId: post.id, variantId: done.id, key };
+    };
+
+    await step(
+      "20c. A check of a pending Instagram container runs with no host; the object goes when the host is back",
+      async () => {
+        const post = queued2("instagram", photo);
+        clock = post.time;
+        answers.ig = "IN_PROGRESS";
+        await pass2();
+        const variant = variant2(post.id, "instagram");
+        assert.equal(variant.status, "publishing");
+        const key: string = JSON.parse(pendingRow(variant.id) ?? "{}").hostedKey;
+        assert.ok(bucket.has(key));
+        const checkAt = new Date(clock.getTime() + 60_000);
+        ({ store: content2, accounts2, publisher2 } = build());
+        assert.equal(accounts2.mediaHost(), null);
+        assert.equal(publisher2.nextDueAt(), checkAt.toISOString(), "The check is due with no host.");
+        clock = checkAt;
+        answers.ig = "FINISHED";
+        r2Log.length = 0;
+        await pass2();
+        assert.equal(variant2(post.id, "instagram").status, "published");
+        assert.equal(r2Log.length, 0, "No bucket request while there is no host.");
+        assert.equal(JSON.parse(pendingRow(variant.id) ?? "{}").hostedKey, key, "The key stays recorded.");
+        ({ store: content2, accounts2, publisher2 } = build());
+        await Effect.runPromise(accounts2.loadMediaHost());
+        await Effect.runPromise(publisher2.releaseHostedMedia());
+        assert.deepEqual(r2Log, [{ method: "DELETE", key, bucket: "content-bucket" }]);
+        assert.equal(bucket.has(key), false);
+        assert.equal(pendingRow(variant.id), null);
+        return { key };
+      },
+    );
+
+    await step(
+      "20d. Delete with a kept object: refused while its DELETE fails; then one DELETE of that key, then the delete",
+      async () => {
+        const { postId, variantId, key } = await publishedWithKept();
+        failDeletes = 1;
+        r2Log.length = 0;
+        assert.equal(await refusal(service2().deletePost(postId)), cleanupText);
+        assert.deepEqual(
+          r2Log.map((entry) => `${entry.method} ${entry.key === key}`),
+          ["DELETE true"],
+        );
+        assert.ok(content2.readPost(postId), "The post stays.");
+        assert.equal(JSON.parse(pendingRow(variantId) ?? "{}").hostedKey, key, "The key stays.");
+        // The store refuses too, whoever calls it.
+        assert.throws(
+          () => content2.deletePost(postId),
+          (error) => error instanceof Error && error.message === cleanupText,
+        );
+        r2Log.length = 0;
+        await Effect.runPromise(service2().deletePost(postId));
+        assert.deepEqual(r2Log, [{ method: "DELETE", key, bucket: "content-bucket" }]);
+        assert.equal(bucket.has(key), false);
+        assert.equal(content2.readPost(postId), null, "The post is deleted.");
+        return { key };
+      },
+    );
+
+    await step(
+      "20e. A new host is refused while a kept object's DELETE fails; then the old host removes it, and the save runs",
+      async () => {
+        await Effect.runPromise(
+          accounts2.setApp("instagram", { clientId: "ig-client-id", clientSecret: "ig-client-secret-0123456789" }),
+        );
+        const { variantId, key } = await publishedWithKept();
+        const newHost = {
+          platform: "instagram" as const,
+          mediaHost: { endpoint: `https://${R2}`, bucket: "new-bucket", publicBaseUrl: `https://${PUBLIC}` },
+        };
+        failDeletes = 1;
+        r2Log.length = 0;
+        assert.equal(await refusal(service2().beginConnect(newHost)), cleanupText);
+        assert.deepEqual(r2Log, [{ method: "DELETE", key, bucket: "content-bucket" }], "No request to the new host.");
+        assert.equal(JSON.parse(pendingRow(variantId) ?? "{}").hostedKey, key, "The key stays.");
+        assert.equal(accounts2.mediaHostView().bucket, "content-bucket", "Nothing is saved.");
+        r2Log.length = 0;
+        const saved = await Effect.runPromise(service2().beginConnect(newHost));
+        assert.equal(saved.mediaHost?.bucket, "new-bucket");
+        assert.deepEqual(
+          r2Log.map((entry) => `${entry.method} ${entry.bucket}`),
+          ["DELETE content-bucket", "PUT new-bucket", "GET public", "DELETE new-bucket"],
+        );
+        assert.equal(r2Log[0]?.key, key, "The old host removes the kept object first.");
+        assert.equal(pendingRow(variantId), null);
+        assert.equal(bucket.size, 0);
+        return { key };
+      },
+    );
+
+    await step("20f. A retry is due now: a failed post moved to a future time publishes in one pass", async () => {
+      const post = queued2("facebook_page", null);
+      const variant = variant2(post.id, "facebook_page");
+      assert.ok(content2.claimVariant(variant.id, null, clock));
+      content2.finishVariant(variant.id, { kind: "failed", code: "server", message: "x" }, clock);
+      const future = new Date(clock.getTime() + 3 * 3_600_000).toISOString();
+      content2.schedulePost(post.id, future, clock);
+      assert.equal(content2.readPost(post.id)?.scheduledFor, future, "The failed post has a future time.");
+      const retried = content2.retryVariant(post.id, "facebook_page", clock);
+      assert.equal(retried.scheduledFor, clock.toISOString(), "The retry is due now.");
+      await pass2();
+      const done = variant2(post.id, "facebook_page");
+      assert.equal(done.status, "published", done.error ?? "");
+      assert.equal(done.externalPostId, "page-1_1");
+      return { scheduledFor: retried.scheduledFor };
+    });
+
+    await step("20g. Decision A: a retry beside a sibling queued for the future keeps the time", async () => {
+      const post = queued2("facebook_page", null);
+      content2.setVariantSkipped(post.id, "threads", false, clock);
+      assert.equal(variant2(post.id, "threads").status, "queued");
+      const variant = variant2(post.id, "facebook_page");
+      assert.ok(content2.claimVariant(variant.id, null, clock));
+      content2.finishVariant(variant.id, { kind: "failed", code: "server", message: "x" }, clock);
+      const retried = content2.retryVariant(post.id, "facebook_page", clock);
+      assert.equal(retried.scheduledFor, post.time.toISOString(), "The time stays.");
+      const sent = sent4.length;
+      await pass2();
+      assert.equal(sent4.length, sent, "Nothing publishes before the time.");
+      assert.equal(variant2(post.id, "threads").status, "queued");
+      content2.unschedulePost(post.id, clock);
+      return { scheduledFor: retried.scheduledFor };
+    });
 
     await step(
       "21. YouTube: publishing -> pending (processing) -> published across passes; no upload to the host",

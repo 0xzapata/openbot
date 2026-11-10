@@ -1,6 +1,6 @@
-// Checks the step 4 adapters (Instagram, Threads, Facebook Page, YouTube) and the R2 image host against a
-// fake `fetch` that answers as the documents of each network say, and records each request. The clock is
-// fixed. Nothing leaves this process: the global `fetch` throws, and the check fails if anything calls it.
+// Checks the step 4 adapters (Instagram, Threads, Facebook Page, YouTube), the pending cap of X and LinkedIn,
+// and the R2 image host against a fake `fetch` that answers as the documents of each network say, and records
+// each request. The clock is fixed. Nothing leaves this process: the global `fetch` throws, and the check fails if anything calls it.
 //
 // Run: bunx tsx scripts/content-adapters-e2e.ts
 // Writes .openbot-build/content-adapters-e2e/report.json and exits non-zero on a failure.
@@ -23,6 +23,7 @@ import {
   R2MediaHost,
   signS3Request,
 } from "../src/main/content/content-media-host";
+import { LinkedInAdapter } from "../src/main/content/linkedin-adapter";
 import {
   FACEBOOK_SCOPES,
   FacebookPageAdapter,
@@ -31,6 +32,7 @@ import {
   metaError,
   ThreadsAdapter,
 } from "../src/main/content/meta-adapters";
+import { XAdapter } from "../src/main/content/x-adapter";
 import { YOUTUBE_SCOPES, YouTubeAdapter } from "../src/main/content/youtube-adapter";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -449,7 +451,8 @@ try {
     const again = pendingOf(
       await run(instagram.checkPostStatus({ accessToken: SECRETS.longToken, pendingData: pending.pendingData })),
     );
-    assert.equal(again.pendingData, pending.pendingData);
+    assert.equal(again.checkAfterMs, 120_000, "IN_PROGRESS doubles the wait.");
+    assert.equal(JSON.parse(again.pendingData).containerId, "container-1");
     const done = await during(() =>
       run(instagram.checkPostStatus({ accessToken: SECRETS.longToken, pendingData: pending.pendingData })),
     );
@@ -486,12 +489,17 @@ try {
     const noHost = await during(() => flip(instagram.publish({ ...input, media: jpeg })));
     assert.equal(noHost.sent.length, 0);
     assert.equal(noHost.value.code, "invalid");
+    const noImage = await during(() => flip(instagram.publish({ ...input, media: null, hostImage })));
+    assert.equal(noImage.sent.length, 0);
+    assert.equal(noImage.value.code, "invalid");
+    assert.equal(noImage.value.message, "This network needs an image.");
     const big = { ...jpeg, bytes: new Uint8Array(8 * 1024 * 1024 + 1) };
     assert.equal((await flip(instagram.publish({ ...input, media: big, hostImage }))).code, "invalid");
-    return { refused: 3 };
+    return { refused: 4 };
   });
 
-  await step("8. Instagram and Threads container ERROR, EXPIRED and the 24 h give-up", async () => {
+  const threads = new ThreadsAdapter(options);
+  await step("8. Instagram and Threads container ERROR, EXPIRED, PUBLISHED and the 24 h give-up", async () => {
     const pendingData = JSON.stringify({
       containerId: "container-1",
       userId: "17841400000",
@@ -519,10 +527,27 @@ try {
     clock = start;
     assert.equal(late.code, "unknown-result");
     assert.equal(late.message, "Instagram did not finish the post in 24 hours. Check Instagram before you retry.");
-    return { codes: ["rejected", "unknown-result", "unknown-result"] };
+
+    const threadsPending = JSON.stringify({ containerId: "th-old", userId: "990011", startedAt: clock.toISOString() });
+    const threadsAnswer = (answer: unknown) => {
+      routes.set("GET graph.threads.com/v1.0/th-old", () => json(200, answer));
+      return flip(threads.checkPostStatus({ accessToken: SECRETS.longToken, pendingData: threadsPending }));
+    };
+    const threadsError = await threadsAnswer({ status: "ERROR", error_message: "Text too long" });
+    assert.equal(threadsError.code, "rejected");
+    assert.equal(threadsError.message, "Threads refused the post: Text too long");
+    assert.equal((await threadsAnswer({ status: "EXPIRED" })).code, "unknown-result");
+    const published = await during(() => threadsAnswer({ status: "PUBLISHED" }));
+    assert.equal(published.value.code, "unknown-result");
+    assert.equal(published.value.message, "Threads sent no post id. Check Threads before you retry.");
+    assert.deepEqual(routesOf(published.sent), ["GET graph.threads.com/v1.0/th-old"], "No second publish.");
+    clock = new Date(start.getTime() + 24 * 60 * 60_000 + 1);
+    const threadsLate = await threadsAnswer({ status: "IN_PROGRESS" });
+    clock = start;
+    assert.equal(threadsLate.message, "Threads did not finish the post in 24 hours. Check Threads before you retry.");
+    return { instagram: ["rejected", "unknown-result", "unknown-result"], threads: 4 };
   });
 
-  const threads = new ThreadsAdapter(options);
   await step("9. Threads sign-in, refresh, text post and image post", async () => {
     const { start } = authorizeChecks(
       threads,
@@ -937,7 +962,7 @@ try {
       };
       assert.equal((await answer(401, "authError")).code, "signed-out");
       assert.equal((await answer(403, "quotaExceeded")).code, "rate-limited");
-      assert.equal((await answer(403, "uploadLimitExceeded")).code, "rate-limited");
+      assert.equal((await answer(400, "uploadLimitExceeded")).code, "rate-limited");
       assert.equal((await answer(403, "forbidden")).code, "rejected");
       assert.equal((await answer(400, "invalidTitle")).code, "rejected");
       assert.equal((await answer(503, null)).code, "server");
@@ -949,7 +974,290 @@ try {
   );
 
   await step(
-    "17. No secret is in an error message; only fake hosts got requests; the global fetch was never called",
+    "17. Meta create requests: a transient 500 of media_publish asks the container; Facebook /feed 500 is unknown",
+    async () => {
+      const pendingData = JSON.stringify({
+        containerId: "container-2",
+        userId: "17841400000",
+        startedAt: clock.toISOString(),
+      });
+      let states: string[] = [];
+      routes.set(`GET graph.instagram.com/${META_GRAPH_VERSION}/container-2`, () =>
+        json(200, { status_code: states.shift() ?? "IN_PROGRESS" }),
+      );
+      routes.set(`POST graph.instagram.com/${META_GRAPH_VERSION}/17841400000/media_publish`, () =>
+        json(500, { error: { message: "An unexpected error has occurred.", code: 2, is_transient: true } }),
+      );
+      states = ["FINISHED", "PUBLISHED"];
+      const live = await during(() => flip(instagram.checkPostStatus({ accessToken: SECRETS.longToken, pendingData })));
+      assert.equal(live.value.code, "unknown-result");
+      assert.equal(
+        live.value.message,
+        "Instagram did not answer. The post may exist: check Instagram before you retry.",
+      );
+      assert.deepEqual(routesOf(live.sent), [
+        `GET graph.instagram.com/${META_GRAPH_VERSION}/container-2`,
+        `POST graph.instagram.com/${META_GRAPH_VERSION}/17841400000/media_publish`,
+        `GET graph.instagram.com/${META_GRAPH_VERSION}/container-2`,
+      ]);
+      states = ["FINISHED", "FINISHED"];
+      const notLive = await flip(instagram.checkPostStatus({ accessToken: SECRETS.longToken, pendingData }));
+      assert.equal(notLive.code, "server");
+      assert.equal(notLive.message, "Instagram had a server error (500).");
+      // A failed read of the container leaves the result unknown.
+      states = ["FINISHED"];
+      routes.set(`GET graph.instagram.com/${META_GRAPH_VERSION}/container-2`, () =>
+        states.length ? json(200, { status_code: states.shift() }) : json(503, {}),
+      );
+      assert.equal(
+        (await flip(instagram.checkPostStatus({ accessToken: SECRETS.longToken, pendingData }))).code,
+        "unknown-result",
+      );
+      routes.set(`POST graph.facebook.com/${META_GRAPH_VERSION}/page-1/feed`, () =>
+        json(500, { error: { message: "Please retry", code: 1 } }),
+      );
+      const feed = await flip(
+        facebook.publish({
+          accessToken: SECRETS.pageToken,
+          profile: { externalAccountId: "page-1" },
+          body: "x",
+          title: null,
+          media: null,
+        }),
+      );
+      assert.equal(feed.code, "unknown-result");
+      return { live: live.value.code, notLive: notLive.code, feed: feed.code };
+    },
+  );
+
+  await step(
+    "18. Meta codes: refresh 400 code 4 rate-limited, 80001 and 9/2207042 rate-limited, token 400 no code signed-out",
+    async () => {
+      routes.set("GET graph.instagram.com/refresh_access_token", () =>
+        json(400, { error: { message: "Application request limit reached", code: 4 } }),
+      );
+      const refresh = await flip(
+        instagram.refreshToken({ clientId: "c", clientSecret: null, refreshToken: SECRETS.longToken }),
+      );
+      assert.equal(refresh.code, "rate-limited");
+      const classify = (
+        status: number,
+        error: { code?: number; error_subcode?: number; is_transient?: boolean },
+        tokenRequest = false,
+      ) =>
+        Effect.runPromise(
+          Effect.flip(
+            metaError(
+              new Response(null, { status }),
+              { error },
+              "Instagram",
+              "error.content.signInAgainInstagram",
+              tokenRequest,
+            ),
+          ),
+        );
+      assert.equal((await classify(400, { code: 80001 })).code, "rate-limited");
+      assert.equal((await classify(400, { code: 9, error_subcode: 2207042 })).code, "rate-limited");
+      assert.equal((await classify(400, { code: 9 })).code, "rejected");
+      assert.equal((await classify(400, {}, true)).code, "signed-out");
+      assert.equal((await classify(400, { code: 190 }, true)).code, "signed-out");
+      assert.equal((await classify(500, { code: 2, is_transient: true })).code, "server", "Not a create request.");
+      return { refresh: refresh.code };
+    },
+  );
+
+  await step("19. Meta container wait doubles on each IN_PROGRESS, up to 15 minutes; old data decodes", async () => {
+    routes.set(`GET graph.instagram.com/${META_GRAPH_VERSION}/container-3`, () =>
+      json(200, { status_code: "IN_PROGRESS" }),
+    );
+    const old = JSON.stringify({ containerId: "container-3", userId: "17841400000", startedAt: clock.toISOString() });
+    const first = pendingOf(await run(instagram.checkPostStatus({ accessToken: SECRETS.longToken, pendingData: old })));
+    const second = pendingOf(
+      await run(instagram.checkPostStatus({ accessToken: SECRETS.longToken, pendingData: first.pendingData })),
+    );
+    assert.equal(first.checkAfterMs, 120_000);
+    assert.equal(second.checkAfterMs, 240_000);
+    const near = JSON.stringify({ ...JSON.parse(old), intervalMs: 600_000 });
+    const capped = pendingOf(
+      await run(instagram.checkPostStatus({ accessToken: SECRETS.longToken, pendingData: near })),
+    );
+    assert.equal(capped.checkAfterMs, 15 * 60_000);
+    return { waits: [first.checkAfterMs, second.checkAfterMs, capped.checkAfterMs] };
+  });
+
+  await step(
+    "20. X and LinkedIn pending: processing, startedAt, give-up after 24 h, old data without startedAt",
+    async () => {
+      const x = new XAdapter(options);
+      routes.set("POST api.x.com/2/media/upload", () =>
+        json(200, { data: { id: "x-media-1", processing_info: { state: "pending", check_after_secs: 3 } } }),
+      );
+      routes.set("GET api.x.com/2/media/upload", () =>
+        json(200, { data: { id: "x-media-1", processing_info: { state: "in_progress", check_after_secs: 4 } } }),
+      );
+      const xPending = pendingOf(await run(x.publish({ accessToken: "x-token", body: "Hello X", media: png })));
+      assert.equal(xPending.checkAfterMs, 3_000);
+      assert.equal(JSON.parse(xPending.pendingData).startedAt, clock.toISOString());
+      const linkedin = new LinkedInAdapter(options);
+      routes.set("POST api.linkedin.com/rest/images", () =>
+        json(200, { value: { uploadUrl: "https://api.linkedin.com/mediaUpload/1", image: "urn:li:image:1" } }),
+      );
+      routes.set("PUT api.linkedin.com/mediaUpload/1", () => new Response(null, { status: 201 }));
+      routes.set("GET api.linkedin.com/rest/images/urn%3Ali%3Aimage%3A1", () => json(200, { status: "PROCESSING" }));
+      const liPending = pendingOf(
+        await run(
+          linkedin.publish({ accessToken: "li-token", profile: { externalAccountId: "abc" }, body: "Hi", media: jpeg }),
+        ),
+      );
+      assert.equal(JSON.parse(liPending.pendingData).startedAt, clock.toISOString());
+      const start = clock;
+      const results: Record<string, string> = {};
+      const cases: [string, ContentAdapter, string, string][] = [
+        ["x", x, xPending.pendingData, JSON.stringify({ mediaId: "x-media-1", text: "Hello X" })],
+        [
+          "linkedin",
+          linkedin,
+          liPending.pendingData,
+          JSON.stringify({ image: "urn:li:image:1", author: "urn:li:person:abc", text: "Hi" }),
+        ],
+      ];
+      for (const [name, adapter, pendingData, old] of cases) {
+        // Old pending data has no start time: it gets one now and keeps it.
+        clock = new Date(start.getTime() + 60_000);
+        const renewed = pendingOf(await run(adapter.checkPostStatus({ accessToken: "t", pendingData: old })));
+        assert.equal(JSON.parse(renewed.pendingData).startedAt, clock.toISOString());
+        const kept = pendingOf(
+          await run(adapter.checkPostStatus({ accessToken: "t", pendingData: renewed.pendingData })),
+        );
+        assert.equal(JSON.parse(kept.pendingData).startedAt, clock.toISOString());
+        clock = new Date(start.getTime() + 24 * 60 * 60_000 + 1);
+        const late = await flip(adapter.checkPostStatus({ accessToken: "t", pendingData }));
+        clock = start;
+        assert.equal(late.code, "unknown-result");
+        results[name] = late.code;
+      }
+      return results;
+    },
+  );
+
+  const pendingVideo = JSON.stringify({ videoId: "vid-9", startedAt: clock.toISOString() });
+  await step(
+    "21. YouTube status read: no answer, then 503, stays pending; a later succeeded check publishes",
+    async () => {
+      const answers: Array<() => Response> = [
+        () => {
+          throw new Error("lost line");
+        },
+        () => json(503, { error: { code: 503, message: "Backend Error" } }),
+        () => json(403, { error: { code: 403, errors: [{ reason: "quotaExceeded" }] } }),
+        () => json(200, { items: [{ id: "vid-9", status: {}, processingDetails: { processingStatus: "succeeded" } }] }),
+      ];
+      routes.set("GET www.googleapis.com/youtube/v3/videos", () => (answers.shift() ?? (() => json(500, {})))());
+      const check = () =>
+        run(youtube.checkPostStatus({ accessToken: SECRETS.googleAccess, pendingData: pendingVideo }));
+      const { value, sent } = await during(async () => [
+        pendingOf(await check()),
+        pendingOf(await check()),
+        pendingOf(await check()),
+        await check(),
+      ]);
+      assert.deepEqual(value[3], {
+        kind: "published",
+        externalPostId: "vid-9",
+        url: "https://www.youtube.com/watch?v=vid-9",
+      });
+      assert.ok(
+        sent.every((request) => request.route === "GET www.googleapis.com/youtube/v3/videos"),
+        "No second upload.",
+      );
+      routes.set("GET www.googleapis.com/youtube/v3/videos", () => json(401, {}));
+      assert.equal(
+        (await flip(youtube.checkPostStatus({ accessToken: "t", pendingData: pendingVideo }))).code,
+        "signed-out",
+      );
+      routes.set("GET www.googleapis.com/youtube/v3/videos", () => json(503, {}));
+      clock = new Date(clock.getTime() + 24 * 60 * 60_000 + 1);
+      const late = await flip(youtube.checkPostStatus({ accessToken: "t", pendingData: pendingVideo }));
+      clock = new Date(clock.getTime() - (24 * 60 * 60_000 + 1));
+      assert.equal(late.code, "unknown-result");
+      return { reads: sent.length };
+    },
+  );
+
+  await step(
+    "22. YouTube session query: a 503 waits Retry-After and resumes from 308; lost lines end unknown",
+    async () => {
+      const waits: number[] = [];
+      const tube = new YouTubeAdapter({ ...options, sleep: async (ms: number) => void waits.push(ms) });
+      routes.set(
+        "POST www.googleapis.com/upload/youtube/v3/videos",
+        () => new Response(null, { status: 200, headers: { location: SESSION } }),
+      );
+      let queries = 0;
+      routes.set("PUT www.googleapis.com/upload/youtube/v3/videos", (request) => {
+        if (request.headers["content-range"] === `bytes */${VIDEO.byteLength}`) {
+          queries += 1;
+          return queries === 1
+            ? new Response(null, { status: 503, headers: { "retry-after": "5" } })
+            : new Response(null, { status: 308, headers: { range: "bytes=0-2047" } });
+        }
+        if (!request.headers["content-range"]) throw new Error("lost line");
+        return json(200, { id: "vid-4" });
+      });
+      const resumed = await during(() => run(tube.publish(uploadInput)));
+      assert.deepEqual(waits, [5_000]);
+      assert.deepEqual(
+        resumed.sent.map((request) => [request.method, request.headers["content-range"] ?? null, request.bytes]),
+        [
+          ["POST", null, Buffer.byteLength(resumed.sent[0]?.body ?? "")],
+          ["PUT", null, 4096],
+          ["PUT", "bytes */4096", 0],
+          ["PUT", "bytes */4096", 0],
+          ["PUT", "bytes 2048-4095/4096", 2048],
+        ],
+      );
+      pendingOf(resumed.value);
+      waits.length = 0;
+      routes.set("PUT www.googleapis.com/upload/youtube/v3/videos", () => {
+        throw new Error("lost line");
+      });
+      const lost = await during(() => flip(tube.publish(uploadInput)));
+      assert.equal(lost.value.code, "unknown-result");
+      assert.equal(lost.value.message, "YouTube did not answer. The post may exist: check YouTube before you retry.");
+      assert.deepEqual(waits, [1_000, 2_000]);
+      assert.equal(lost.sent.length, 1 + 1 + 3, "One start, one PUT, three status queries.");
+      // A known incomplete state stays `server`.
+      routes.set("PUT www.googleapis.com/upload/youtube/v3/videos", (request) =>
+        request.headers["content-range"]?.startsWith("bytes */") ? new Response(null, { status: 308 }) : json(500, {}),
+      );
+      const incomplete = await flip(tube.publish(uploadInput));
+      assert.equal(incomplete.code, "server");
+      assert.equal(incomplete.message, "The upload to YouTube did not finish. Try again.");
+      return { waits: [5_000, 1_000, 2_000], lost: lost.value.code, incomplete: incomplete.code };
+    },
+  );
+
+  await step("23. YouTube refuses an upload Location that is not https on googleapis.com", async () => {
+    for (const location of [
+      "https://evil.example.test/upload?upload_id=1",
+      "https://googleapis.com.evil.example.test/upload",
+      "http://www.googleapis.com/upload/youtube/v3/videos?upload_id=1",
+    ]) {
+      routes.set(
+        "POST www.googleapis.com/upload/youtube/v3/videos",
+        () => new Response(null, { status: 200, headers: { location } }),
+      );
+      const refused = await during(() => flip(youtube.publish(uploadInput)));
+      assert.equal(refused.value.code, "server");
+      assert.equal(refused.value.message, "YouTube sent no upload address.");
+      assert.deepEqual(routesOf(refused.sent), ["POST www.googleapis.com/upload/youtube/v3/videos"], location);
+    }
+    assert.ok(!requests.some((request) => request.url.host.includes("evil")));
+    return { refused: 3 };
+  });
+
+  await step(
+    "24. No secret is in an error message; only fake hosts got requests; the global fetch was never called",
     async () => {
       // Each error path above put a token in the provider text; the redaction must hide it.
       const { registerSecretValue } = await import("@openbot/logging");
@@ -992,6 +1300,8 @@ try {
         "graph.facebook.com",
         "oauth2.googleapis.com",
         "www.googleapis.com",
+        "api.x.com",
+        "api.linkedin.com",
       ]);
       assert.deepEqual(
         hosts.filter((name) => !allowed.has(name)),

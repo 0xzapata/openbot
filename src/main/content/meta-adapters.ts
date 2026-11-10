@@ -13,6 +13,7 @@
 
 import { isDynamicRecord } from "@openbot/contracts/runtime-values";
 import { sourceText } from "@openbot/i18n/source";
+import { registerSecretValue } from "@openbot/logging";
 import { Effect } from "effect";
 import { z } from "zod";
 import {
@@ -49,27 +50,38 @@ type MetaSignInKey =
   | "error.content.signInAgainThreads"
   | "error.content.signInAgainFacebook";
 
-/** The typed error of a Meta answer that is not 2xx: `{ error: { message, type, code, error_subcode } }`. */
+/** Graph codes of a rate limit. Code 9 is one only with subcode 2207042 (the Instagram publish limit). */
+const META_RATE_LIMIT_CODES = new Set([4, 17, 32, 613, 80001, 80002]);
+
+/**
+ * The typed error of a Meta answer that is not 2xx: `{ error: { message, type, code, error_subcode,
+ * is_transient } }`. `creates`: the request can make a post. Meta can answer a server or transient error
+ * while the post goes live, so that answer is `unknown-result`.
+ */
 export function metaError(
   response: Response,
   body: unknown,
   network: string,
   signInKey: MetaSignInKey,
   tokenRequest = false,
+  creates = false,
 ): Effect.Effect<never, ContentAdapterError> {
   const status = response.status;
   const error = isDynamicRecord(body) && isDynamicRecord(body.error) ? body.error : {};
   const code = typeof error.code === "number" ? error.code : null;
+  const subcode = typeof error.error_subcode === "number" ? error.error_subcode : null;
   const text = shortProviderText(error.message) ?? shortProviderText(isDynamicRecord(body) ? body.error_message : null);
   const fail = (adapterCode: ContentAdapterError["code"], message: string) =>
     Effect.fail(new ContentAdapterError({ code: adapterCode, status, message }));
-  if (code === 190 || status === 401 || (tokenRequest && status === 400))
-    return fail("signed-out", sourceText(signInKey));
-  if (code !== null && [4, 17, 32, 613, 80002].includes(code))
+  if (code === 190 || status === 401) return fail("signed-out", sourceText(signInKey));
+  if (status === 429 || (code !== null && META_RATE_LIMIT_CODES.has(code)) || (code === 9 && subcode === 2207042))
     return fail("rate-limited", sourceText("error.content.rateLimitedLater", { network }));
-  if (status === 429) return fail("rate-limited", sourceText("error.content.rateLimitedLater", { network }));
-  if (status >= 500)
-    return fail("server", sourceText("error.content.serverError", { network, status: String(status) }));
+  if (status >= 500 || code === 1 || code === 2 || error.is_transient === true)
+    return creates
+      ? fail("unknown-result", sourceText("error.content.noAnswer", { network }))
+      : fail("server", sourceText("error.content.serverError", { network, status: String(status) }));
+  // A refused token request with no Graph code: the code or the token is no longer valid.
+  if (tokenRequest && status === 400 && code === null) return fail("signed-out", sourceText(signInKey));
   if (code === 10 || (code !== null && code >= 200 && code <= 299))
     return fail(
       "rejected",
@@ -91,7 +103,7 @@ function needsSecret(network: string): ContentAdapterError {
 }
 
 /** The pending result of a network that still processes a post, with the time it started. */
-export function processingPending(data: Record<string, string>, checkAfterMs: number): ContentPublishResult {
+export function processingPending(data: Record<string, string | number>, checkAfterMs: number): ContentPublishResult {
   return { kind: "pending", pendingData: JSON.stringify(data), checkAfterMs, reason: "processing" };
 }
 
@@ -146,7 +158,7 @@ const INSTAGRAM: ContainerNetwork = {
   statusFields: "status_code,status",
   statusField: "status_code",
   errorField: "status",
-  // Meta: read the status about once a minute.
+  // Meta: read the status about once a minute. Each IN_PROGRESS answer doubles the wait.
   checkAfterMs: 60_000,
   signInKey: "error.content.signInAgainInstagram",
 };
@@ -172,7 +184,16 @@ const THREADS: ContainerNetwork = {
   signInKey: "error.content.signInAgainThreads",
 };
 
-const containerPendingSchema = z.object({ containerId: z.string(), userId: z.string(), startedAt: z.string() });
+/** The longest wait between two status reads of a container. */
+const CONTAINER_MAX_CHECK_AFTER_MS = 15 * 60_000;
+
+// `intervalMs` is optional: pending data from before it has none.
+const containerPendingSchema = z.object({
+  containerId: z.string(),
+  userId: z.string(),
+  startedAt: z.string(),
+  intervalMs: z.number().optional(),
+});
 
 /** Instagram and Threads: a container from a public image URL or from text, then its publish. */
 class ContainerAdapter implements ContentAdapter {
@@ -233,6 +254,7 @@ class ContainerAdapter implements ContentAdapter {
     // The Instagram documents show the token both flat and in `data[0]`.
     const shortToken = isDynamicRecord(shortBody) && Array.isArray(shortBody.data) ? shortBody.data[0] : shortBody;
     const first = yield* tokensOf(shortToken, this.#options.now(), network.name);
+    registerSecretValue(first.accessToken);
     const longUrl = new URL(`${network.graph}/access_token`);
     longUrl.search = formBody({
       grant_type: network.exchangeGrant,
@@ -352,18 +374,7 @@ class ContainerAdapter implements ContentAdapter {
         status: null,
         message: sourceText("error.content.uploadStateInvalid", { network: network.name }),
       });
-    const response = yield* contentRequest(
-      this.#options,
-      network.name,
-      this.#url(encodeURIComponent(pending.containerId), {
-        fields: network.statusFields,
-        access_token: input.accessToken,
-      }),
-      {},
-    );
-    const body = yield* responseJson(response);
-    if (!response.ok) return yield* metaError(response, body, network.name, network.signInKey);
-    const record = isDynamicRecord(body) ? body : {};
+    const record = yield* this.#containerStatus(input.accessToken, pending.containerId);
     switch (record[network.statusField]) {
       case "FINISHED":
         return yield* this.#publishContainer(input.accessToken, pending.userId, pending.containerId);
@@ -387,7 +398,26 @@ class ContainerAdapter implements ContentAdapter {
         });
     }
     if (pendingExpired(pending.startedAt, this.#options.now())) return yield* gaveUp(network.name);
-    return processingPending(pending, network.checkAfterMs);
+    const intervalMs = Math.min((pending.intervalMs ?? network.checkAfterMs) * 2, CONTAINER_MAX_CHECK_AFTER_MS);
+    return processingPending({ ...pending, intervalMs }, intervalMs);
+  });
+
+  /** The status answer of a container. */
+  readonly #containerStatus = Effect.fn("ContainerAdapter.containerStatus")(function* (
+    this: ContainerAdapter,
+    accessToken: string,
+    containerId: string,
+  ) {
+    const network = this.#network;
+    const response = yield* contentRequest(
+      this.#options,
+      network.name,
+      this.#url(encodeURIComponent(containerId), { fields: network.statusFields, access_token: accessToken }),
+      {},
+    );
+    const body = yield* responseJson(response);
+    if (!response.ok) return yield* metaError(response, body, network.name, network.signInKey);
+    return isDynamicRecord(body) ? body : {};
   });
 
   readonly #publishContainer = Effect.fn("ContainerAdapter.publishContainer")(function* (
@@ -409,7 +439,17 @@ class ContainerAdapter implements ContentAdapter {
       },
     );
     const body = yield* responseJson(response);
-    if (!response.ok) return yield* metaError(response, body, network.name, network.signInKey);
+    if (!response.ok) {
+      const error = yield* Effect.flip(metaError(response, body, network.name, network.signInKey, false, true));
+      if (error.code !== "unknown-result") return yield* error;
+      // The container tells if the post went live: FINISHED is not published, so the error stays a server error.
+      const state = yield* this.#containerStatus(accessToken, containerId).pipe(
+        Effect.map((record) => record[network.statusField]),
+        Effect.orElseSucceed(() => null),
+      );
+      if (state === "FINISHED") return yield* metaError(response, body, network.name, network.signInKey);
+      return yield* error;
+    }
     const mediaId = isDynamicRecord(body) ? body.id : null;
     if (typeof mediaId !== "string" || !mediaId)
       return yield* new ContentAdapterError({
@@ -513,6 +553,7 @@ export class FacebookPageAdapter implements ContentAdapter {
       now,
       FACEBOOK,
     );
+    registerSecretValue(short.accessToken);
     const user = yield* tokensOf(
       yield* this.#get(
         "oauth/access_token",
@@ -527,6 +568,7 @@ export class FacebookPageAdapter implements ContentAdapter {
       now,
       FACEBOOK,
     );
+    registerSecretValue(user.accessToken);
     const pages = yield* this.#get("me/accounts", { fields: "id,name,access_token", access_token: user.accessToken });
     const list = isDynamicRecord(pages) && Array.isArray(pages.data) ? pages.data.filter(isDynamicRecord) : [];
     if (list.length === 0) return yield* invalid(sourceText("error.content.facebookNoPage"));
@@ -597,7 +639,8 @@ export class FacebookPageAdapter implements ContentAdapter {
       timeoutMs: CONTENT_UPLOAD_TIMEOUT_MS,
     });
     const body = yield* responseJson(response);
-    if (!response.ok) return yield* metaError(response, body, FACEBOOK, "error.content.signInAgainFacebook");
+    if (!response.ok)
+      return yield* metaError(response, body, FACEBOOK, "error.content.signInAgainFacebook", false, true);
     const record = isDynamicRecord(body) ? body : {};
     const postId = typeof record.post_id === "string" ? record.post_id : record.id;
     if (typeof postId !== "string" || !postId)

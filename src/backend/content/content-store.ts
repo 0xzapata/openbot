@@ -334,7 +334,8 @@ export class ContentStore {
 
   /**
    * Deletes the post and its variants, and then the media files that no other post or variant names.
-   * Refused while a network posts it: the request may still need its file.
+   * Refused while a network posts it: the request may still need its file. Refused while a variant still
+   * records an image host key: the key is the only record of that public object.
    */
   deletePost(postId: string): void {
     let files: string[] = [];
@@ -346,6 +347,7 @@ export class ContentStore {
         if (!post) throw new ContentStateError(sourceText("error.content.unknownPost"));
         if (post.variants.some((variant) => variant.status === "publishing"))
           throw new ContentStateError(sourceText("error.content.publishing"));
+        if (this.hasHostedKeys(postId)) throw new ContentStateError(sourceText("error.content.mediaHostCleanup"));
         files = [post.media, ...post.variants.map((variant) => variant.media)].flatMap((media) =>
           media ? [media.file] : [],
         );
@@ -495,8 +497,9 @@ export class ContentStore {
   }
 
   /**
-   * Only a user action calls this. The time of the post stays, so the variant is due at once. A post with no
-   * time gets the time now: a queued variant always belongs to a live schedule.
+   * Only a user action calls this. A retry is due now: the time of the post becomes now when it is empty
+   * or in the future. Decision A: when another variant of the post is queued, the time stays, so that those
+   * variants do not publish early; this one then publishes with them.
    */
   retryVariant(postId: string, platform: ContentPlatform, now = new Date()): ContentPost {
     const result = this.#postWrite(
@@ -506,13 +509,17 @@ export class ContentStore {
       (post, db, sequence) => {
         const variant = post.variants.find((candidate) => candidate.platform === platform);
         if (variant?.status !== "failed") throw new ContentStateError(sourceText("error.content.retryOnlyFailed"));
+        const time = now.toISOString();
+        const siblingQueued = post.variants.some((other) => other.id !== variant.id && other.status === "queued");
+        const keep = post.scheduledFor !== null && (siblingQueued || post.scheduledFor <= time);
+        const scheduledFor = keep ? post.scheduledFor : time;
         db.prepare(
-          "UPDATE content_posts SET scheduled_for = COALESCE(scheduled_for, ?), updated_at = ?, last_event_sequence = ? WHERE post_id = ?",
-        ).run(now.toISOString(), now.toISOString(), sequence, postId);
+          "UPDATE content_posts SET scheduled_for = ?, updated_at = ?, last_event_sequence = ? WHERE post_id = ?",
+        ).run(scheduledFor, time, sequence, postId);
         db.prepare(
           `UPDATE content_variants SET status = 'queued', error_code = NULL, error = NULL, updated_at = ?,
            last_event_sequence = ? WHERE variant_id = ?`,
-        ).run(now.toISOString(), sequence, variant.id);
+        ).run(time, sequence, variant.id);
       },
     );
     this.#queued();
@@ -664,6 +671,17 @@ export class ContentStore {
       variantId: requiredStringColumn(row, "variant_id"),
       key: requiredStringColumn(row, "hosted_key"),
     }));
+  }
+
+  /** True when a variant, of the post `postId` or of any post, still records an image host key. */
+  hasHostedKeys(postId?: string): boolean {
+    return Boolean(
+      this.#database.connection
+        .prepare(
+          `SELECT 1 FROM content_variants WHERE ${HOSTED_KEY} IS NOT NULL AND (? IS NULL OR post_id = ?) LIMIT 1`,
+        )
+        .get(postId ?? null, postId ?? null),
+    );
   }
 
   /** Main removed the object of `key`. Only that key of a variant that is not `publishing` is cleared. */

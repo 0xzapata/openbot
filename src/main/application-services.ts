@@ -2012,6 +2012,7 @@ export async function createApplicationServices({
     accounts: contentAccounts,
     drafts: mailbox,
     now: () => new Date(),
+    releaseHostedMedia: (variantId) => contentPublisher.releaseHostedMedia(variantId),
   });
   // Load the local catalog before telemetry starts so tool steps and inventory use the same names.
   // Agents read it too, for the state of a Marketplace app they suggest.

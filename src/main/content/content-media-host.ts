@@ -9,8 +9,11 @@
 
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { sourceText } from "@openbot/i18n/source";
+import { createOpenBotLogger } from "@openbot/logging";
 import { Effect, Schema } from "effect";
-import { ContentAdapterError, type ContentFetch, contentRequest } from "./content-adapter";
+import { CONTENT_UPLOAD_TIMEOUT_MS, ContentAdapterError, type ContentFetch, contentRequest } from "./content-adapter";
+
+const logger = createOpenBotLogger("content-media-host");
 
 /** The default values of the image host settings. Each one can be changed in the Accounts dialog. */
 export const CONTENT_MEDIA_HOST_DEFAULTS = {
@@ -160,7 +163,13 @@ export class R2MediaHost implements ContentMediaHost {
     return `${this.#settings.publicBaseUrl.replace(/\/+$/u, "")}/${key}`;
   }
 
-  #request(method: "PUT" | "DELETE", key: string, body: Uint8Array<ArrayBuffer> | null, mimeType: string | null) {
+  #request(
+    method: "PUT" | "DELETE",
+    key: string,
+    body: Uint8Array<ArrayBuffer> | null,
+    mimeType: string | null,
+    timeoutMs?: number,
+  ) {
     const url = this.#objectUrl(key);
     // ponytail: no `If-None-Match: *`, because R2 support for it on the S3 PutObject path is not confirmed
     // offline. 128 random bits make a key collision negligible; add the header after a check against R2.
@@ -174,7 +183,12 @@ export class R2MediaHost implements ContentMediaHost {
       region: S3_REGION,
       now: this.#now(),
     });
-    return contentRequest({ fetch: this.#fetch }, NETWORK, url, { method, headers, ...(body ? { body } : {}) });
+    return contentRequest({ fetch: this.#fetch }, NETWORK, url, {
+      method,
+      headers,
+      ...(body ? { body } : {}),
+      ...(timeoutMs ? { timeoutMs } : {}),
+    });
   }
 
   readonly put = Effect.fn("R2MediaHost.put")(function* (
@@ -183,7 +197,9 @@ export class R2MediaHost implements ContentMediaHost {
     key: string,
   ) {
     if (!isContentHostedKey(key)) return yield* refusedKey();
-    const response = yield* this.#request("PUT", key, file.bytes, file.mimeType).pipe(Effect.mapError(unreachable));
+    const response = yield* this.#request("PUT", key, file.bytes, file.mimeType, CONTENT_UPLOAD_TIMEOUT_MS).pipe(
+      Effect.mapError(unreachable),
+    );
     if (!response.ok) return yield* refused(response.status);
     return { url: this.publicUrl(key) };
   });
@@ -226,8 +242,17 @@ export class R2MediaHost implements ContentMediaHost {
           message: sourceText("error.content.mediaHostBytesDiffer"),
         });
     });
-    // Removed on success and on failure. A failed upload made no object, so its DELETE finds none.
-    yield* check.pipe(Effect.ensuring(this.remove(key).pipe(Effect.ignore)));
+    // Removed on success and on failure. A failed upload made no object, so its DELETE finds none. A failed
+    // DELETE leaves the probe file in the bucket: the log names it. The field is `object`, because the
+    // logger hides a field named `key`.
+    const removeProbe = this.remove(key).pipe(
+      Effect.catch((error) =>
+        Effect.sync(() =>
+          logger.warn("An image host probe file could not be removed.", { object: key, cause: error.message }),
+        ),
+      ),
+    );
+    yield* check.pipe(Effect.ensuring(removeProbe));
   });
 }
 

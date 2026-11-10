@@ -472,7 +472,13 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
                                       {t("common.cancel")}
                                     </Button>
                                   </Match>
-                                  <Match when={account()?.status === "connected" && state.setup === "instagram"}>
+                                  <Match
+                                    when={
+                                      network().platform === "instagram" &&
+                                      account()?.status === "connected" &&
+                                      state.setup === "instagram"
+                                    }
+                                  >
                                     <Button
                                       variant="outline"
                                       size="xs"

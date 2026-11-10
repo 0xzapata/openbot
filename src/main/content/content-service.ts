@@ -154,22 +154,35 @@ export interface ContentServiceOptions {
   /** The checked file of an attachment draft. */
   drafts: Pick<MailboxStore, "resolveDraftFile">;
   now: () => Date;
+  /** The publisher's removal of recorded image host objects: of one variant, or of all variants. */
+  releaseHostedMedia: (variantId?: string | null) => Effect.Effect<void>;
 }
 
-/** Meta asks for the app secret in the token exchange. A YouTube Desktop client has no confidential secret. */
-const NEEDS_SECRET: ReadonlySet<ContentPlatform> = new Set(["linkedin", "instagram", "threads", "facebook_page"]);
+/**
+ * Meta asks for the app secret in the token exchange. Google asks for it too: its token endpoint answers
+ * "client_secret is missing" for a Desktop client, also with PKCE.
+ */
+const NEEDS_SECRET: ReadonlySet<ContentPlatform> = new Set([
+  "linkedin",
+  "instagram",
+  "threads",
+  "facebook_page",
+  "youtube",
+]);
 
 export class ContentService {
   readonly #store: ContentStore;
   readonly #accounts: ContentAccounts;
   readonly #drafts: Pick<MailboxStore, "resolveDraftFile">;
   readonly #now: () => Date;
+  readonly #releaseHostedMedia: (variantId?: string | null) => Effect.Effect<void>;
 
   constructor(options: ContentServiceOptions) {
     this.#store = options.store;
     this.#accounts = options.accounts;
     this.#drafts = options.drafts;
     this.#now = options.now;
+    this.#releaseHostedMedia = options.releaseHostedMedia;
   }
 
   readonly listAccounts = Effect.fn("ContentService.listAccounts")(function* (this: ContentService) {
@@ -218,9 +231,21 @@ export class ContentService {
       return yield* refuse(sourceText("error.content.addSecret", { network }));
     // The host is checked and saved first: Instagram cannot post without it.
     if (input.mediaHost) {
+      // A recorded key does not name its bucket, so its object is removed from the current host before
+      // the host changes. While one stays, nothing is saved: the new host would never find that object.
+      if (this.#accounts.mediaHost()) {
+        yield* this.#releaseHostedMedia(null);
+        if (yield* storeCall(() => this.#store.hasHostedKeys()))
+          return yield* refuse(sourceText("error.content.mediaHostCleanup"));
+      }
       yield* this.#accounts.saveMediaHost(input.mediaHost).pipe(Effect.mapError(failure));
-      // New host values for a connected account: saved, and no new sign-in.
-      if (this.#store.connectedAccount(input.platform)) return yield* this.listAccounts();
+      // New host values for a connected account and no new app values: saved, and no new sign-in.
+      if (
+        this.#store.connectedAccount(input.platform) &&
+        input.clientId === undefined &&
+        input.clientSecret === undefined
+      )
+        return yield* this.listAccounts();
     } else if (input.platform === "instagram" && !this.#accounts.mediaHost())
       return yield* refuse(sourceText("error.content.instagramNeedsHost"));
     if (input.clientId !== undefined || input.clientSecret !== undefined)
@@ -329,7 +354,14 @@ export class ContentService {
     }
   });
 
+  /**
+   * Removes the image host objects of the post first: the store refuses the delete while a key is recorded,
+   * because the variant row is the only record of that public object.
+   */
   readonly deletePost = Effect.fn("ContentService.deletePost")(function* (this: ContentService, postId: string) {
+    const post = yield* storeCall(() => this.#store.readPost(postId));
+    for (const variant of post?.variants ?? [])
+      if (this.#store.hostedKey(variant.id)) yield* this.#releaseHostedMedia(variant.id);
     yield* storeCall(() => this.#store.deletePost(postId));
   });
 

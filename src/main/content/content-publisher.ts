@@ -36,7 +36,7 @@ import {
   type ContentPublishMedia,
   type ContentPublishResult,
 } from "./content-adapter";
-import { contentHostedKey } from "./content-media-host";
+import { contentHostedKey, isContentHostedKey } from "./content-media-host";
 
 const logger = createOpenBotLogger("content-publisher");
 
@@ -124,9 +124,18 @@ export class ContentPublisher implements RoutineDueSource {
         Effect.orElseSucceed(() => []),
       );
       for (const { variantId: id, key } of keys) {
-        const host = this.#accounts.mediaHost();
         // The object name is not a secret: it is random and names nothing of the user. The log field is
         // `object`, because the logger hides a field named `key`.
+        if (!isContentHostedKey(key)) {
+          // OpenBot never made this object, so it never deletes it. The record goes, so no start tries again.
+          logger.warn("A recorded image host key is not a content key; it is cleared, not deleted.", {
+            variantId: id,
+            object: key,
+          });
+          yield* Effect.try(() => this.#store.clearHostedKey(id, key)).pipe(Effect.ignore);
+          continue;
+        }
+        const host = this.#accounts.mediaHost();
         const removed = host
           ? yield* host.remove(key).pipe(
               Effect.as(true),
@@ -312,7 +321,8 @@ export class ContentPublisher implements RoutineDueSource {
     const file: ContentPublishMedia = {
       kind: media.kind,
       mimeType: media.mimeType,
-      bytes: new Uint8Array(bytes),
+      // A view, not a copy: a video can be 1 GB.
+      bytes: new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
       name: media.name,
     };
     return file;

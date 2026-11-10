@@ -21,6 +21,7 @@ import {
   shortProviderText,
   tokensOf,
 } from "./content-adapter";
+import { gaveUp, pendingExpired, processingPending } from "./meta-adapters";
 
 const AUTHORIZE_URL = "https://x.com/i/oauth2/authorize";
 const TOKEN_URL = "https://api.x.com/2/oauth2/token";
@@ -120,7 +121,11 @@ export class XAdapter implements ContentAdapter {
         message: sourceText("error.content.noMediaId", { network: NETWORK }),
       });
     // ponytail: a still image is usually ready at once; this branch matters for GIF and video. Keep it small.
-    const pending = processingPending(data, data.id, input.body);
+    const pending = xPending(data, {
+      mediaId: data.id,
+      text: input.body,
+      startedAt: this.#options.now().toISOString(),
+    });
     if (pending) return pending;
     return yield* this.#createPost(input.accessToken, input.body, data.id);
   });
@@ -151,7 +156,10 @@ export class XAdapter implements ContentAdapter {
         status: null,
         message: sourceText("error.content.imageFailed", { network: NETWORK }),
       });
-    const again = processingPending(data, pending.mediaId, pending.text);
+    // Pending data from before `startedAt` starts its 24 h now.
+    const startedAt = pending.startedAt ?? this.#options.now().toISOString();
+    const again = xPending(data, { ...pending, startedAt });
+    if (again && pendingExpired(startedAt, this.#options.now())) return yield* gaveUp(NETWORK);
     if (again) return again;
     return yield* this.#createPost(input.accessToken, pending.text, pending.mediaId);
   });
@@ -205,14 +213,17 @@ export class XAdapter implements ContentAdapter {
   });
 }
 
-function processingPending(data: DynamicRecord, mediaId: string, text: string): ContentPublishResult | null {
+/** The pending result of an upload that X still processes, or null when X has finished it. */
+function xPending(data: DynamicRecord, pending: Required<XPending>): ContentPublishResult | null {
   const info = isDynamicRecord(data.processing_info) ? data.processing_info : null;
   if (info?.state !== "pending" && info?.state !== "in_progress") return null;
   const seconds = typeof info.check_after_secs === "number" && info.check_after_secs > 0 ? info.check_after_secs : 5;
-  return { kind: "pending", pendingData: JSON.stringify({ mediaId, text }), checkAfterMs: seconds * 1000 };
+  return processingPending(pending, seconds * 1000);
 }
 
-const pendingSchema = z.object({ mediaId: z.string(), text: z.string() });
+// `startedAt` is optional: pending data from before it has none.
+const pendingSchema = z.object({ mediaId: z.string(), text: z.string(), startedAt: z.string().optional() });
+type XPending = z.infer<typeof pendingSchema>;
 
 /** The data of an upload that X still processes, or null when it is not valid. */
 function decodePending(value: string): z.infer<typeof pendingSchema> | null {
