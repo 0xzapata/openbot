@@ -431,8 +431,22 @@
   overflow-wrap: anywhere;
 }
 
-/* While the host row is open, its icon stays at the top, as in the other rows. */
-.content-media-host[data-open] > .ui-item-media {
+/* A row whose badge and actions do not fit beside the name moves the actions to a second line, at the end,
+ * so the name and the waiting hint are never cut to a few characters. */
+.content-account {
+  flex-wrap: wrap;
+}
+
+.content-account > .ui-item-content {
+  flex: 1 1 12rem;
+}
+
+.content-account > .ui-item-actions {
+  margin-inline-start: auto;
+}
+
+/* A row that shows its setup fields or its sign-in wait keeps its icon and its actions at the top. */
+.content-account[data-open] > :is(.ui-item-media, .z-badge, .ui-item-actions) {
   align-self: flex-start;
 }
 

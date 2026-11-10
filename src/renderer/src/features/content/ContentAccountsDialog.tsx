@@ -403,6 +403,9 @@ export function ContentAccountsDialog(props: ContentAccountsDialogProps) {
                             data-focus={
                               props.content.state.accountsDialog?.platform === network().platform ? "" : undefined
                             }
+                            data-open={
+                              state.setup === network().platform || connecting() === network().platform ? "" : undefined
+                            }
                           >
                             <ItemMedia>
                               <ContentNetworkMark platform={network().platform} class="content-network-mark" />
