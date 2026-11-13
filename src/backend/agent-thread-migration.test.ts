@@ -132,6 +132,7 @@ function withoutTasks(rows: Record<string, unknown[]>): Record<string, unknown[]
     browser_profile_proxies: _profileProxies,
     agent_usage_skill_loads: _skillLoads,
     projection_messaging_pings: _pings,
+    projection_pinned_thread_messages: _pins,
     content_accounts: _contentAccounts,
     content_posts: _contentPosts,
     content_variants: _contentVariants,
@@ -141,7 +142,7 @@ function withoutTasks(rows: Record<string, unknown[]>): Record<string, unknown[]
 }
 
 function expectHealthy(db: DatabaseSync): void {
-  expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 61 });
+  expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 63 });
   expect(db.prepare("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
   expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
   expect(db.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
@@ -248,9 +249,9 @@ describe("agent thread migration", () => {
     seedThreads(db);
     seedTasks(db);
     const before = contents(db);
-    db.exec("INSERT INTO schema_migrations VALUES(62,'now')");
+    db.exec("INSERT INTO schema_migrations VALUES(64,'now')");
     expect(() => migrateOpenBotDatabase(db)).toThrow("newer than this application supports");
-    db.exec("DELETE FROM schema_migrations WHERE version=62; DELETE FROM schema_migrations WHERE version=20");
+    db.exec("DELETE FROM schema_migrations WHERE version=64; DELETE FROM schema_migrations WHERE version=20");
     expect(() => migrateOpenBotDatabase(db)).toThrow("missing version 20");
     expect(contents(db)).toEqual(before);
   });

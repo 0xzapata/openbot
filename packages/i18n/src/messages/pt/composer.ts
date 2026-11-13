@@ -78,6 +78,7 @@ export const messages = {
   "composer.placeholder.answer": "Digite sua resposta",
   "composer.add.label": "Adicionar à instrução",
   "composer.add.files": "Anexar arquivos",
+  "composer.add.teach": "Ensinar uma tarefa",
   "composer.add.skill": "Usar uma habilidade",
   "composer.upload.cancel": "Cancelar envio",
   "composer.upload.uploading": "Enviando {name}",
@@ -117,6 +118,10 @@ export const messages = {
   "composer.error.changeModel": "Não foi possível mudar de modelo. Tente novamente.",
   "composer.error.changeEffort": "Não foi possível alterar o esforço. Tente novamente.",
   "composer.error.changeFastMode": "Não foi possível alterar o modo rápido. Tente novamente.",
+  "composer.fastMode.confirmTitle": "Ativar o modo rápido?",
+  "composer.fastMode.confirmDescription":
+    "O Claude responde mais rápido, mas cada token custa mais. Com uma assinatura do Claude, o modo rápido sempre usa créditos de uso, mesmo quando o seu plano ainda tem uso disponível.",
+  "composer.fastMode.confirm": "Ativar",
   "composer.context.label": "Contexto: {percent} usado",
   "composer.context.labelEstimated": "Contexto: cerca de {percent} usado",
   "composer.context.labelCompacting": "Compactando o contexto",

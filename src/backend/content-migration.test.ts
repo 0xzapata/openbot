@@ -7,7 +7,7 @@ import { migrateOpenBotDatabase } from "./openbot-database-schema";
 // Failure modes: the upgrade changes or loses a row of any table; a failed upgrade leaves a content table
 // or its marker; a newer or incomplete history is accepted; deleting a post leaves its variants; deleting
 // an account deletes its variants instead of unbinding them; a post gets two variants of one platform.
-// These fixtures cover each. Migration 61 adds the link column of a variant: it must keep every content row
+// These fixtures cover each. Migration 63 adds the link column of a variant: it must keep every content row
 // and give each one a null link, and a failed run must leave no column and no marker.
 const databases: DatabaseSync[] = [];
 afterEach(() => {
@@ -39,7 +39,7 @@ function migrateUpTo(db: DatabaseSync, version: number): void {
   db.exec("DROP TRIGGER stop_at_version");
 }
 
-/** Rows in several tables of schema 59: an event, a memory, a Slack connection and a ping. */
+/** Rows in several tables of schema 61: an event, a memory, a Slack connection and a ping. */
 function seed(db: DatabaseSync): void {
   db.prepare(`INSERT INTO orchestration_events
     (event_id, command_id, aggregate_type, aggregate_id, event_type, occurred_at, payload_json)
@@ -74,7 +74,7 @@ function contentObjects(db: DatabaseSync) {
 }
 
 function expectHealthy(db: DatabaseSync): void {
-  expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 61 });
+  expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 63 });
   expect(db.prepare("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
   expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
   expect(db.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
@@ -108,7 +108,7 @@ function insertVariant(
     VALUES (?, ?, ?, ?, 'draft', '2026-01-04', '2026-01-04', 4)`).run(variantId, postId, platform, accountId);
 }
 
-/** Content rows of schema 60: an account, two posts, and a published, a failed and a waiting variant. */
+/** Content rows of schema 62: an account, two posts, and a published, a failed and a waiting variant. */
 function seedContent(db: DatabaseSync): void {
   insertAccount(db, "account-1");
   insertPost(db, "post-1");
@@ -133,7 +133,7 @@ function hasUrlColumn(db: DatabaseSync): boolean {
     .some((column) => column.name === "external_url");
 }
 
-/** The rows after migration 61: the same, and each variant has a null link. */
+/** The rows after migration 63: the same, and each variant has a null link. */
 function withNullLinks(before: Record<string, unknown[]>): Record<string, unknown[]> {
   const variants = before.content_variants ?? [];
   return {
@@ -143,8 +143,8 @@ function withNullLinks(before: Record<string, unknown[]>): Record<string, unknow
 }
 
 describe("content migration", () => {
-  it("preserves every row from schema 59 and adds the empty content tables", () => {
-    const db = databaseAt(59);
+  it("preserves every row from schema 61 and adds the empty content tables", () => {
+    const db = databaseAt(61);
     seed(db);
     const before = contents(db);
     migrateOpenBotDatabase(db);
@@ -153,10 +153,10 @@ describe("content migration", () => {
     expectHealthy(db);
   });
 
-  it.each([8, 25, 40, 58])("preserves every row from released schema %i through migration 60", (version) => {
+  it.each([8, 25, 40, 58])("preserves every row from released schema %i through migration 62", (version) => {
     const db = databaseAt(version);
-    // The earlier migrations run first; the rows after them are what v60 must keep.
-    migrateUpTo(db, 59);
+    // The earlier migrations run first; the rows after them are what v62 must keep.
+    migrateUpTo(db, 61);
     seed(db);
     const before = contents(db);
     migrateOpenBotDatabase(db);
@@ -165,15 +165,15 @@ describe("content migration", () => {
   });
 
   it("rolls back the tables and the marker after a late failure, then retries", () => {
-    const db = databaseAt(59);
+    const db = databaseAt(61);
     seed(db);
     const before = contents(db);
-    db.exec(`CREATE TEMP TRIGGER fail_marker BEFORE INSERT ON schema_migrations WHEN new.version=60
+    db.exec(`CREATE TEMP TRIGGER fail_marker BEFORE INSERT ON schema_migrations WHEN new.version=62
       BEGIN SELECT RAISE(ABORT, 'late failure'); END;`);
-    expect(() => migrateOpenBotDatabase(db)).toThrow("migration to version 60 failed");
+    expect(() => migrateOpenBotDatabase(db)).toThrow("migration to version 62 failed");
     expect(contents(db)).toEqual(before);
     expect(contentObjects(db)).toEqual([]);
-    expect(db.prepare("SELECT version FROM schema_migrations WHERE version=60").all()).toEqual([]);
+    expect(db.prepare("SELECT version FROM schema_migrations WHERE version=62").all()).toEqual([]);
     expect(db.prepare("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
     db.exec("DROP TRIGGER fail_marker");
     migrateOpenBotDatabase(db);
@@ -183,19 +183,19 @@ describe("content migration", () => {
   });
 
   it("rejects newer and incomplete migration histories before it creates the tables", () => {
-    const db = databaseAt(59);
+    const db = databaseAt(61);
     seed(db);
     const before = contents(db);
-    db.exec("INSERT INTO schema_migrations VALUES(62,'now')");
+    db.exec("INSERT INTO schema_migrations VALUES(64,'now')");
     expect(() => migrateOpenBotDatabase(db)).toThrow("newer than this application supports");
-    db.exec("DELETE FROM schema_migrations WHERE version=62; DELETE FROM schema_migrations WHERE version=20");
+    db.exec("DELETE FROM schema_migrations WHERE version=64; DELETE FROM schema_migrations WHERE version=20");
     expect(() => migrateOpenBotDatabase(db)).toThrow("missing version 20");
     expect(contents(db)).toEqual(before);
     expect(contentObjects(db)).toEqual([]);
   });
 
   it("deletes variants with their post, unbinds them from a deleted account, and keeps one per platform", () => {
-    const db = databaseAt(59);
+    const db = databaseAt(61);
     seed(db);
     migrateOpenBotDatabase(db);
     insertAccount(db, "account-1");
@@ -226,7 +226,7 @@ describe("content migration", () => {
   });
 
   it("refuses a stored status or approval state outside the released values", () => {
-    const db = databaseAt(59);
+    const db = databaseAt(61);
     migrateOpenBotDatabase(db);
     expect(() =>
       db
@@ -246,8 +246,8 @@ describe("content migration", () => {
     expectHealthy(db);
   });
 
-  it("preserves every row from schema 60 and gives each variant a null link", () => {
-    const db = databaseAt(60);
+  it("preserves every row from schema 62 and gives each variant a null link", () => {
+    const db = databaseAt(62);
     seed(db);
     seedContent(db);
     const before = contents(db);
@@ -258,28 +258,31 @@ describe("content migration", () => {
     expectHealthy(db);
   });
 
-  it.each([8, 40, 58, 59])("preserves every content row from released schema %i through migration 61", (version) => {
-    const db = databaseAt(version);
-    migrateUpTo(db, 60);
-    seed(db);
-    seedContent(db);
-    const before = contents(db);
-    migrateOpenBotDatabase(db);
-    expect(contents(db)).toEqual(withNullLinks(before));
-    expectHealthy(db);
-  });
+  it.each([8, 40, 58, 59, 60, 61])(
+    "preserves every content row from released schema %i through migration 63",
+    (version) => {
+      const db = databaseAt(version);
+      migrateUpTo(db, 62);
+      seed(db);
+      seedContent(db);
+      const before = contents(db);
+      migrateOpenBotDatabase(db);
+      expect(contents(db)).toEqual(withNullLinks(before));
+      expectHealthy(db);
+    },
+  );
 
-  it("rolls back the link column and the marker after a late failure at 61, then retries", () => {
-    const db = databaseAt(60);
+  it("rolls back the link column and the marker after a late failure at 63, then retries", () => {
+    const db = databaseAt(62);
     seed(db);
     seedContent(db);
     const before = contents(db);
-    db.exec(`CREATE TEMP TRIGGER fail_marker BEFORE INSERT ON schema_migrations WHEN new.version=61
+    db.exec(`CREATE TEMP TRIGGER fail_marker BEFORE INSERT ON schema_migrations WHEN new.version=63
       BEGIN SELECT RAISE(ABORT, 'late failure'); END;`);
-    expect(() => migrateOpenBotDatabase(db)).toThrow("migration to version 61 failed");
+    expect(() => migrateOpenBotDatabase(db)).toThrow("migration to version 63 failed");
     expect(contents(db)).toEqual(before);
     expect(hasUrlColumn(db)).toBe(false);
-    expect(db.prepare("SELECT version FROM schema_migrations WHERE version=61").all()).toEqual([]);
+    expect(db.prepare("SELECT version FROM schema_migrations WHERE version=63").all()).toEqual([]);
     expect(db.prepare("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
     db.exec("DROP TRIGGER fail_marker");
     migrateOpenBotDatabase(db);
@@ -287,14 +290,14 @@ describe("content migration", () => {
     expectHealthy(db);
   });
 
-  it("rejects newer and incomplete histories from schema 60 before it adds the link column", () => {
-    const db = databaseAt(60);
+  it("rejects newer and incomplete histories from schema 62 before it adds the link column", () => {
+    const db = databaseAt(62);
     seed(db);
     seedContent(db);
     const before = contents(db);
-    db.exec("INSERT INTO schema_migrations VALUES(62,'now')");
+    db.exec("INSERT INTO schema_migrations VALUES(64,'now')");
     expect(() => migrateOpenBotDatabase(db)).toThrow("newer than this application supports");
-    db.exec("DELETE FROM schema_migrations WHERE version=62; DELETE FROM schema_migrations WHERE version=20");
+    db.exec("DELETE FROM schema_migrations WHERE version=64; DELETE FROM schema_migrations WHERE version=20");
     expect(() => migrateOpenBotDatabase(db)).toThrow("missing version 20");
     expect(contents(db)).toEqual(before);
     expect(hasUrlColumn(db)).toBe(false);

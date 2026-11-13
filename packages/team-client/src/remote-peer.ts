@@ -30,6 +30,7 @@ import {
 import type { LiveVoiceEvent } from "@openbot/contracts/team-protocol/live-voice-v1";
 import { optionalTeamEvent, optionalTeamEventToCurrent } from "@openbot/contracts/team-protocol/optional-events";
 import { teamSideRouteCodec } from "@openbot/contracts/team-protocol/side-routes";
+import { addSkillSuggestionNames } from "@openbot/contracts/team-protocol/skill-learning-v1";
 import { addUiBlockAutoAnswers } from "@openbot/contracts/team-protocol/ui-block-auto-answer-v1";
 import { addUiBlockVaultRequests } from "@openbot/contracts/team-protocol/ui-block-vault-v1";
 import {
@@ -89,6 +90,7 @@ import {
   type ProbeSample,
   unmeasuredProbeMs,
 } from "./remote-path-check";
+import { startRemoteRequestDeadline } from "./remote-recovery";
 import { createTeamRequestId } from "./request-id";
 import { encodeTeamWebRtcPayload, TeamWebRtcPayloadDecoder } from "./webrtc-framing";
 
@@ -399,6 +401,8 @@ interface PeerState {
   signalReady: boolean;
   /** The host answered a request on this peer, so its channels worked after authentication. */
   answeredRequest: boolean;
+  /** When the host last answered a request on this peer, as `performance.now()`. A request deadline counts from it. */
+  lastAnswerAt: number;
   /** The close code of the last Signal socket, so a connection timeout can name it. */
   lastSignalClose: number | null;
   /** For the support log: when the current socket opened, and when and why the last offer went out. */
@@ -1118,6 +1122,7 @@ export function createRemoteTeamPeer(
         ticketRequest: false,
         signalReady: false,
         answeredRequest: false,
+        lastAnswerAt: 0,
         lastSignalClose: null,
         signalOpenedAt: 0,
         offerSentAt: null,
@@ -1752,6 +1757,7 @@ export function createRemoteTeamPeer(
         if (frame.type !== "response")
           return yield* new RemotePeerError({ message: "The host returned an invalid RPC frame." });
         state.answeredRequest = true;
+        state.lastAnswerAt = performance.now();
         const pending = pendingRequests.get(frame.requestId);
         if (!pending) return;
         pending.profile?.responded(data);
@@ -1788,6 +1794,9 @@ export function createRemoteTeamPeer(
                     channelAttention: true,
                     agentTaskUiBlocks: true,
                     channelIsolation: true,
+                    channelPicture: true,
+                    channelBrowser: true,
+                    channelSeenSubtasks: true,
                     mcpManyServers: true,
                   }),
                 )
@@ -1840,11 +1849,12 @@ export function createRemoteTeamPeer(
         return yield* new RemotePeerError({ message: sourceText("error.remote.malformedEvent") });
       state.lastEventSequence = frame.sequence;
       if (decoded.status === "known") {
-        // The frozen event codec leaves the automatic answer and the Vault request of a block out; the
-        // wire frame has them.
+        // The frozen event codec leaves the automatic answer and the Vault request of a block, and the
+        // skill name of a skill question, out; the wire frame has them.
         if (sendsBlockExtensions(state)) {
           addUiBlockAutoAnswers(decoded.event, frame.payload);
           addUiBlockVaultRequests(decoded.event, frame.payload);
+          addSkillSuggestionNames(decoded.event, frame.payload);
         }
         yield* RemotePeerIO.use((io) => io.teamEvent(state.hostId, decoded.event));
       }
@@ -1951,7 +1961,9 @@ export function createRemoteTeamPeer(
         const payloadBody = upload
           ? null
           : sideRoute
-            ? yield* peerDecode(() => sideRoute.request(path, body, { channelIsolation: true }))
+            ? yield* peerDecode(() =>
+                sideRoute.request(path, body, { channelIsolation: true, channelPicture: true, channelBrowser: true }),
+              )
             : // A caller names a provider and model on agent creation only when the host advertises
               // `agent-create-model`, so the pair is kept whenever it is present.
               yield* peerDecode(() =>
@@ -2035,12 +2047,19 @@ export function createRemoteTeamPeer(
               resolve,
               reject,
               profile: startRemoteRequest(method, path, payload),
-              timer: setTimeout(
-                checksConnection ? checkPath : expire,
-                checksConnection
-                  ? Math.min(arm ? PATH_CHECK_INTERVAL_MS : unmeasuredProbeMs(!state.answeredRequest), timeoutMs)
-                  : timeoutMs,
-              ),
+              timer: checksConnection
+                ? setTimeout(
+                    checkPath,
+                    Math.min(arm ? PATH_CHECK_INTERVAL_MS : unmeasuredProbeMs(!state.answeredRequest), timeoutMs),
+                  )
+                : startRemoteRequestDeadline(
+                    timeoutMs,
+                    () => state.lastAnswerAt,
+                    expire,
+                    (timer) => {
+                      pending.timer = timer;
+                    },
+                  ),
             };
             pendingRequests.set(requestId, pending);
             return pending;
@@ -2563,22 +2582,23 @@ function signalErrorCode(data: string): string | null {
 }
 
 /**
- * Whether the host can send `ui-block-auto-answer-v1` and `ui-block-vault-v1`: the client advertises
- * them only on protocol 9, so the walk is skipped for every older host.
+ * Whether the host can send `ui-block-auto-answer-v1`, `ui-block-vault-v1` and `skill-learning-v1`:
+ * the client advertises them only on protocol 9, so the walk is skipped for every older host.
  */
 function sendsBlockExtensions(state: PeerState): boolean {
   return (state.hostProtocol ?? 0) >= TEAM_PROTOCOL_V9;
 }
 
 /**
- * A decoded response with the automatic answer and the Vault request of each block, which the frozen
- * response codec leaves out. Only a host that the client told `ui-block-auto-answer-v1` or
- * `ui-block-vault-v1` puts them on the wire.
+ * A decoded response with the automatic answer and the Vault request of each block, and the skill name
+ * of each skill question, which the frozen response codec leaves out. Only a host that the client told
+ * `ui-block-auto-answer-v1`, `ui-block-vault-v1` or `skill-learning-v1` puts them on the wire.
  */
 function withWireBlockExtensions<T>(state: PeerState, decoded: T, wire: unknown): T {
   if (sendsBlockExtensions(state)) {
     addUiBlockAutoAnswers(decoded, wire);
     addUiBlockVaultRequests(decoded, wire);
+    addSkillSuggestionNames(decoded, wire);
   }
   return decoded;
 }

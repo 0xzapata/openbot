@@ -74,6 +74,7 @@ export const messages = {
   "composer.placeholder.messageAgent": "给助手发消息",
   "composer.add.label": "添加到提示词",
   "composer.add.files": "附加文件",
+  "composer.add.teach": "教一项任务",
   "composer.add.skill": "使用技能",
   "composer.upload.cancel": "取消上传",
   "composer.upload.uploading": "正在上传 {name}",
@@ -112,6 +113,10 @@ export const messages = {
   "composer.error.changeModel": "无法切换模型，请重试。",
   "composer.error.changeEffort": "无法调整强度，请重试。",
   "composer.error.changeFastMode": "无法更改快速模式，请重试。",
+  "composer.fastMode.confirmTitle": "开启快速模式？",
+  "composer.fastMode.confirmDescription":
+    "Claude 回答更快，但每个令牌的费用更高。使用 Claude 订阅时，即使套餐仍有剩余用量，快速模式也始终使用用量额度。",
+  "composer.fastMode.confirm": "开启",
   "composer.context.label": "上下文已用 {percent}",
   "composer.context.labelEstimated": "上下文约已用 {percent}",
   "composer.context.labelCompacting": "正在压缩上下文",

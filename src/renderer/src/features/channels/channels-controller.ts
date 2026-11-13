@@ -69,13 +69,20 @@ export interface ChannelsEnvironment {
    */
   isolationSupported: () => boolean;
   /**
-   * Whether this reader can change the picture of a channel. Only this computer keeps a channel
-   * picture: the Team API does not carry it, so a joined server and the browser client cannot.
+   * Whether the host reads and keeps the Browser setting (`channel-browser-v1`); `supported()` is
+   * checked as well. An older joined server drops the setting on the wire, so its select would always
+   * show every member and never save.
+   */
+  browserSupported: () => boolean;
+  /**
+   * Whether this reader can change the picture of a channel. The host keeps a channel picture, and
+   * only a phone with `channel-picture-v1` changes it over the Team API, so a joined server and the
+   * browser client cannot.
    */
   pictureSupported: () => boolean;
   /**
-   * Whether this reader can start a new conversation in a channel or compact it. Only this computer
-   * can: the Team API has no route for them yet.
+   * Whether this reader can start a new conversation in a channel or compact it: this computer, or a
+   * joined server with `chat-history-v1`.
    */
   contextActionsSupported: () => boolean;
   /** Clears whatever else covers the workspace, because a channel is about to cover it. */
@@ -542,6 +549,7 @@ export function createChannelsController(env: ChannelsEnvironment) {
     deletionSupported: () => supported() && env.deletionSupported(),
     taskCancelSupported: () => supported() && env.taskCancelSupported(),
     isolationSupported: () => supported() && env.isolationSupported(),
+    browserSupported: () => supported() && env.browserSupported(),
     messageDeletionSupported,
     deletesAnyMessage: env.deletesAnyMessage,
     deleteMessage,
@@ -565,9 +573,12 @@ export function createChannelsController(env: ChannelsEnvironment) {
       await clearChannelContext(channelId);
       await refreshAfter();
     },
-    /** Whether the host deletes a channel history: as the context actions, from this computer only. */
+    /** Whether the host deletes a channel history: as the context actions, for an owner or admin only. */
     historyDeletionSupported: () =>
-      supported() && env.contextActionsSupported() && env.port().agent.deleteChannelHistory !== undefined,
+      supported() &&
+      env.contextActionsSupported() &&
+      env.deletesAnyMessage() &&
+      env.port().agent.deleteChannelHistory !== undefined,
     /** "Delete history": the messages go, and the members forget them. A failure rejects, for the dialog to show. */
     deleteHistory: async (channelId: string) => {
       const deleteChannelHistory = env.port().agent.deleteChannelHistory;

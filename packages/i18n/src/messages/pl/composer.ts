@@ -76,6 +76,7 @@ export const messages = {
   "composer.placeholder.answer": "Wpisz odpowiedź",
   "composer.add.label": "Dodaj do promptu",
   "composer.add.files": "Załącz pliki",
+  "composer.add.teach": "Naucz zadania",
   "composer.add.skill": "Użyj umiejętności",
   "composer.upload.cancel": "Anuluj przesyłanie",
   "composer.upload.uploading": "Przesyłanie {name}",
@@ -116,6 +117,10 @@ export const messages = {
   "composer.error.changeModel": "Nie udało się zmienić modelu. Spróbuj ponownie.",
   "composer.error.changeEffort": "Nie udało się zmienić poziomu wysiłku. Spróbuj ponownie.",
   "composer.error.changeFastMode": "Nie udało się zmienić trybu szybkiego. Spróbuj ponownie.",
+  "composer.fastMode.confirmTitle": "Włączyć tryb szybki?",
+  "composer.fastMode.confirmDescription":
+    "Claude odpowiada szybciej, ale każdy token kosztuje więcej. Z subskrypcją Claude tryb szybki zawsze korzysta ze środków na użycie, także gdy w planie zostało jeszcze użycie.",
+  "composer.fastMode.confirm": "Włącz",
   "composer.context.label": "Kontekst zapełniony w {percent}",
   "composer.context.labelEstimated": "Kontekst zapełniony w około {percent}",
   "composer.context.labelCompacting": "Kompaktowanie kontekstu",

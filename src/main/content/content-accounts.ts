@@ -589,7 +589,7 @@ export function contentCallbackListener(
 ): ContentCallbackListen {
   return (receive) =>
     startLoopbackCallbackServer({
-      path: CONTENT_REDIRECT_PATH,
+      paths: [CONTENT_REDIRECT_PATH],
       receive,
       language,
       port: { exact: CONTENT_REDIRECT_PORT },

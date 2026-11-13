@@ -79,6 +79,7 @@ export const messages = {
   "composer.placeholder.answer": "Saisissez votre réponse",
   "composer.add.label": "Ajouter à la demande",
   "composer.add.files": "Joindre des fichiers",
+  "composer.add.teach": "Enseigner une tâche",
   "composer.add.skill": "Utiliser une compétence",
   "composer.upload.cancel": "Annuler l’envoi",
   "composer.upload.uploading": "Envoi de {name}",
@@ -120,6 +121,10 @@ export const messages = {
   "composer.error.changeModel": "Impossible de changer de modèle. Réessayez.",
   "composer.error.changeEffort": "Impossible de changer le niveau d’effort. Réessayez.",
   "composer.error.changeFastMode": "Impossible de changer le mode rapide. Réessayez.",
+  "composer.fastMode.confirmTitle": "Activer le mode rapide ?",
+  "composer.fastMode.confirmDescription":
+    "Claude répond plus vite, mais chaque token coûte plus cher. Avec un abonnement Claude, le mode rapide utilise toujours des crédits d’utilisation, même s’il reste de l’utilisation dans votre forfait.",
+  "composer.fastMode.confirm": "Activer",
   "composer.context.label": "Contexte rempli à {percent}",
   "composer.context.labelEstimated": "Contexte rempli à environ {percent}",
   "composer.context.labelCompacting": "Compactage du contexte",

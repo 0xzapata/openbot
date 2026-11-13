@@ -94,6 +94,16 @@ export interface ServerSummary {
   /** A hosted server, which its owner and its admins can restart. Absent when the account server did not say. */
   hosted?: boolean;
   /**
+   * False for a hosted server that the account service cannot restart: an operator runs its machine. Absent
+   * for each other server, and when the account server did not say.
+   */
+  restartAvailable?: boolean;
+  /**
+   * The storage, in GB, that the plan of a hosted server gives for the files of its users. The base image of
+   * the server is not in it. Absent for a server that is not hosted, or when the account server did not say.
+   */
+  storageGb?: number;
+  /**
    * When the host last changed its key, in milliseconds since the epoch. Only a change that both the
    * previous and the new key signed. Absent when the server list has no such change.
    */

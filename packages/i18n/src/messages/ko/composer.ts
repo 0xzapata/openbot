@@ -74,6 +74,7 @@ export const messages = {
   "composer.placeholder.messageAgent": "에이전트에게 메시지 보내기",
   "composer.add.label": "프롬프트에 추가",
   "composer.add.files": "파일 첨부",
+  "composer.add.teach": "작업 가르치기",
   "composer.add.skill": "스킬 사용",
   "composer.upload.cancel": "업로드 취소",
   "composer.upload.uploading": "{name} 업로드 중",
@@ -112,6 +113,10 @@ export const messages = {
   "composer.error.changeModel": "모델을 변경할 수 없었어요. 다시 시도해 주세요.",
   "composer.error.changeEffort": "추론 강도를 변경할 수 없었어요. 다시 시도해 주세요.",
   "composer.error.changeFastMode": "빠른 모드를 변경할 수 없었어요. 다시 시도해 주세요.",
+  "composer.fastMode.confirmTitle": "빠른 모드를 켤까요?",
+  "composer.fastMode.confirmDescription":
+    "Claude가 더 빠르게 답하지만 토큰당 비용이 더 높아요. Claude 구독에서는 요금제 사용량이 남아 있어도 빠른 모드가 항상 사용 크레딧을 써요.",
+  "composer.fastMode.confirm": "켜기",
   "composer.context.label": "컨텍스트 {percent} 사용",
   "composer.context.labelEstimated": "컨텍스트 약 {percent} 사용",
   "composer.context.labelCompacting": "컨텍스트 압축 중",

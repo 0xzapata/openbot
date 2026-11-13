@@ -86,6 +86,7 @@ import { Route as V1AgentTemplatesTemplateIdRouteImport } from './routes/v1/agen
 import { Route as V1AgentTemplatesMineRouteImport } from './routes/v1/agent-templates/mine'
 import { Route as V1AuthLogoutRouteImport } from './routes/v1/auth/logout'
 import { Route as V1AvatarsUserIdRouteImport } from './routes/v1/avatars/$userId'
+import { Route as V1FeedbackSimilarRouteImport } from './routes/v1/feedback/similar'
 import { Route as V1GithubInstallationTokensRouteImport } from './routes/v1/github/installation-tokens'
 import { Route as V1MeAnalyticsRouteImport } from './routes/v1/me/analytics'
 import { Route as V1MeAvatarRouteImport } from './routes/v1/me/avatar'
@@ -115,6 +116,7 @@ import { Route as V2DiscordAuthorizeRouteImport } from './routes/v2/discord/auth
 import { Route as V2DiscordCallbackRouteImport } from './routes/v2/discord/callback'
 import { Route as V2HostingPlansRouteImport } from './routes/v2/hosting/plans'
 import { Route as V2RemoteRouteWakeRouteImport } from './routes/v2/remote/route-wake'
+import { Route as V2ServerClaimsIndexRouteImport } from './routes/v2/server-claims/index'
 import { Route as V2ServerClaimsRedeemRouteImport } from './routes/v2/server-claims/redeem'
 import { Route as V2SlackAuthorizeRouteImport } from './routes/v2/slack/authorize'
 import { Route as V2SlackCallbackRouteImport } from './routes/v2/slack/callback'
@@ -137,8 +139,8 @@ import { Route as V1MeLicenseCheckoutRouteImport } from './routes/v1/me/license/
 import { Route as V1MeLicensePlanRouteImport } from './routes/v1/me/license/plan'
 import { Route as V1MeLicenseRenewalRouteImport } from './routes/v1/me/license/renewal'
 import { Route as V1MeLicenseUsersRouteImport } from './routes/v1/me/license/users'
-import { Route as V1MobileAuthDevicesSessionIdRouteImport } from './routes/v1/mobile-auth/devices/$sessionId'
 import { Route as V1MobileAuthCompanyExchangeRouteImport } from './routes/v1/mobile-auth/company/exchange'
+import { Route as V1MobileAuthDevicesSessionIdRouteImport } from './routes/v1/mobile-auth/devices/$sessionId'
 import { Route as V1MobileAuthEmailVerifyRouteImport } from './routes/v1/mobile-auth/email/verify'
 import { Route as V1SkillsSkillIdCardRouteImport } from './routes/v1/skills/$skillId/card'
 import { Route as V1SkillsSkillIdContentRouteImport } from './routes/v1/skills/$skillId/content'
@@ -599,6 +601,11 @@ const V1AvatarsUserIdRoute = V1AvatarsUserIdRouteImport.update({
   path: '/v1/avatars/$userId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const V1FeedbackSimilarRoute = V1FeedbackSimilarRouteImport.update({
+  id: '/similar',
+  path: '/similar',
+  getParentRoute: () => V1FeedbackRoute,
+} as any)
 const V1GithubInstallationTokensRoute =
   V1GithubInstallationTokensRouteImport.update({
     id: '/v1/github/installation-tokens',
@@ -745,6 +752,11 @@ const V2RemoteRouteWakeRoute = V2RemoteRouteWakeRouteImport.update({
   path: '/v2/remote/route-wake',
   getParentRoute: () => rootRouteImport,
 } as any)
+const V2ServerClaimsIndexRoute = V2ServerClaimsIndexRouteImport.update({
+  id: '/v2/server-claims/',
+  path: '/v2/server-claims/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const V2ServerClaimsRedeemRoute = V2ServerClaimsRedeemRouteImport.update({
   id: '/v2/server-claims/redeem',
   path: '/v2/server-claims/redeem',
@@ -859,17 +871,18 @@ const V1MeLicenseUsersRoute = V1MeLicenseUsersRouteImport.update({
   path: '/license/users',
   getParentRoute: () => V1MeRoute,
 } as any)
+const V1MobileAuthCompanyExchangeRoute =
+  V1MobileAuthCompanyExchangeRouteImport.update({
+    id: '/v1/mobile-auth/company/exchange',
+    path: '/v1/mobile-auth/company/exchange',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const V1MobileAuthDevicesSessionIdRoute =
   V1MobileAuthDevicesSessionIdRouteImport.update({
     id: '/$sessionId',
     path: '/$sessionId',
     getParentRoute: () => V1MobileAuthDevicesRoute,
   } as any)
-const V1MobileAuthCompanyExchangeRoute = V1MobileAuthCompanyExchangeRouteImport.update({
-  id: '/v1/mobile-auth/company/exchange',
-  path: '/v1/mobile-auth/company/exchange',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const V1MobileAuthEmailVerifyRoute = V1MobileAuthEmailVerifyRouteImport.update({
   id: '/v1/mobile-auth/email/verify',
   path: '/v1/mobile-auth/email/verify',
@@ -1343,7 +1356,7 @@ export interface FileRoutesByFullPath {
   '/providers/rss.xml': typeof ProvidersRssDotxmlRoute
   '/slack/connect': typeof SlackConnectRoute
   '/v1/contact': typeof V1ContactRoute
-  '/v1/feedback': typeof V1FeedbackRoute
+  '/v1/feedback': typeof V1FeedbackRouteWithChildren
   '/v1/me': typeof V1MeRouteWithChildren
   '/brand/': typeof BrandIndexRoute
   '/compare/': typeof CompareIndexRoute
@@ -1369,6 +1382,7 @@ export interface FileRoutesByFullPath {
   '/v1/agent-templates/mine': typeof V1AgentTemplatesMineRoute
   '/v1/auth/logout': typeof V1AuthLogoutRoute
   '/v1/avatars/$userId': typeof V1AvatarsUserIdRoute
+  '/v1/feedback/similar': typeof V1FeedbackSimilarRoute
   '/v1/github/installation-tokens': typeof V1GithubInstallationTokensRoute
   '/v1/me/analytics': typeof V1MeAnalyticsRoute
   '/v1/me/avatar': typeof V1MeAvatarRoute
@@ -1403,6 +1417,7 @@ export interface FileRoutesByFullPath {
   '/v1/agent-templates/': typeof V1AgentTemplatesIndexRoute
   '/v1/sites/': typeof V1SitesIndexRoute
   '/v1/skills/': typeof V1SkillsIndexRoute
+  '/v2/server-claims/': typeof V2ServerClaimsIndexRoute
   '/scim/v2/Users/$userId': typeof ScimV2UsersUserIdRoute
   '/v1/agent-templates/$templateId/avatar': typeof V1AgentTemplatesTemplateIdAvatarRoute
   '/v1/agent-templates/$templateId/card': typeof V1AgentTemplatesTemplateIdCardRoute
@@ -1418,8 +1433,8 @@ export interface FileRoutesByFullPath {
   '/v1/me/license/plan': typeof V1MeLicensePlanRoute
   '/v1/me/license/renewal': typeof V1MeLicenseRenewalRoute
   '/v1/me/license/users': typeof V1MeLicenseUsersRoute
-  '/v1/mobile-auth/devices/$sessionId': typeof V1MobileAuthDevicesSessionIdRoute
   '/v1/mobile-auth/company/exchange': typeof V1MobileAuthCompanyExchangeRoute
+  '/v1/mobile-auth/devices/$sessionId': typeof V1MobileAuthDevicesSessionIdRoute
   '/v1/mobile-auth/email/verify': typeof V1MobileAuthEmailVerifyRoute
   '/v1/skills/$skillId/card': typeof V1SkillsSkillIdCardRoute
   '/v1/skills/$skillId/content': typeof V1SkillsSkillIdContentRoute
@@ -1545,7 +1560,7 @@ export interface FileRoutesByTo {
   '/providers/rss.xml': typeof ProvidersRssDotxmlRoute
   '/slack/connect': typeof SlackConnectRoute
   '/v1/contact': typeof V1ContactRoute
-  '/v1/feedback': typeof V1FeedbackRoute
+  '/v1/feedback': typeof V1FeedbackRouteWithChildren
   '/v1/me': typeof V1MeRouteWithChildren
   '/brand': typeof BrandIndexRoute
   '/compare': typeof CompareIndexRoute
@@ -1571,6 +1586,7 @@ export interface FileRoutesByTo {
   '/v1/agent-templates/mine': typeof V1AgentTemplatesMineRoute
   '/v1/auth/logout': typeof V1AuthLogoutRoute
   '/v1/avatars/$userId': typeof V1AvatarsUserIdRoute
+  '/v1/feedback/similar': typeof V1FeedbackSimilarRoute
   '/v1/github/installation-tokens': typeof V1GithubInstallationTokensRoute
   '/v1/me/analytics': typeof V1MeAnalyticsRoute
   '/v1/me/avatar': typeof V1MeAvatarRoute
@@ -1605,6 +1621,7 @@ export interface FileRoutesByTo {
   '/v1/agent-templates': typeof V1AgentTemplatesIndexRoute
   '/v1/sites': typeof V1SitesIndexRoute
   '/v1/skills': typeof V1SkillsIndexRoute
+  '/v2/server-claims': typeof V2ServerClaimsIndexRoute
   '/scim/v2/Users/$userId': typeof ScimV2UsersUserIdRoute
   '/v1/agent-templates/$templateId/avatar': typeof V1AgentTemplatesTemplateIdAvatarRoute
   '/v1/agent-templates/$templateId/card': typeof V1AgentTemplatesTemplateIdCardRoute
@@ -1620,8 +1637,8 @@ export interface FileRoutesByTo {
   '/v1/me/license/plan': typeof V1MeLicensePlanRoute
   '/v1/me/license/renewal': typeof V1MeLicenseRenewalRoute
   '/v1/me/license/users': typeof V1MeLicenseUsersRoute
-  '/v1/mobile-auth/devices/$sessionId': typeof V1MobileAuthDevicesSessionIdRoute
   '/v1/mobile-auth/company/exchange': typeof V1MobileAuthCompanyExchangeRoute
+  '/v1/mobile-auth/devices/$sessionId': typeof V1MobileAuthDevicesSessionIdRoute
   '/v1/mobile-auth/email/verify': typeof V1MobileAuthEmailVerifyRoute
   '/v1/skills/$skillId/card': typeof V1SkillsSkillIdCardRoute
   '/v1/skills/$skillId/content': typeof V1SkillsSkillIdContentRoute
@@ -1751,7 +1768,7 @@ export interface FileRoutesById {
   '/providers/rss.xml': typeof ProvidersRssDotxmlRoute
   '/slack/connect': typeof SlackConnectRoute
   '/v1/contact': typeof V1ContactRoute
-  '/v1/feedback': typeof V1FeedbackRoute
+  '/v1/feedback': typeof V1FeedbackRouteWithChildren
   '/v1/me': typeof V1MeRouteWithChildren
   '/_home/': typeof HomeIndexRoute
   '/brand/': typeof BrandIndexRoute
@@ -1778,6 +1795,7 @@ export interface FileRoutesById {
   '/v1/agent-templates/mine': typeof V1AgentTemplatesMineRoute
   '/v1/auth/logout': typeof V1AuthLogoutRoute
   '/v1/avatars/$userId': typeof V1AvatarsUserIdRoute
+  '/v1/feedback/similar': typeof V1FeedbackSimilarRoute
   '/v1/github/installation-tokens': typeof V1GithubInstallationTokensRoute
   '/v1/me/analytics': typeof V1MeAnalyticsRoute
   '/v1/me/avatar': typeof V1MeAvatarRoute
@@ -1812,6 +1830,7 @@ export interface FileRoutesById {
   '/v1/agent-templates/': typeof V1AgentTemplatesIndexRoute
   '/v1/sites/': typeof V1SitesIndexRoute
   '/v1/skills/': typeof V1SkillsIndexRoute
+  '/v2/server-claims/': typeof V2ServerClaimsIndexRoute
   '/scim/v2/Users/$userId': typeof ScimV2UsersUserIdRoute
   '/v1/agent-templates/$templateId/avatar': typeof V1AgentTemplatesTemplateIdAvatarRoute
   '/v1/agent-templates/$templateId/card': typeof V1AgentTemplatesTemplateIdCardRoute
@@ -1827,8 +1846,8 @@ export interface FileRoutesById {
   '/v1/me/license/plan': typeof V1MeLicensePlanRoute
   '/v1/me/license/renewal': typeof V1MeLicenseRenewalRoute
   '/v1/me/license/users': typeof V1MeLicenseUsersRoute
-  '/v1/mobile-auth/devices/$sessionId': typeof V1MobileAuthDevicesSessionIdRoute
   '/v1/mobile-auth/company/exchange': typeof V1MobileAuthCompanyExchangeRoute
+  '/v1/mobile-auth/devices/$sessionId': typeof V1MobileAuthDevicesSessionIdRoute
   '/v1/mobile-auth/email/verify': typeof V1MobileAuthEmailVerifyRoute
   '/v1/skills/$skillId/card': typeof V1SkillsSkillIdCardRoute
   '/v1/skills/$skillId/content': typeof V1SkillsSkillIdContentRoute
@@ -1982,6 +2001,7 @@ export interface FileRouteTypes {
     | '/v1/agent-templates/mine'
     | '/v1/auth/logout'
     | '/v1/avatars/$userId'
+    | '/v1/feedback/similar'
     | '/v1/github/installation-tokens'
     | '/v1/me/analytics'
     | '/v1/me/avatar'
@@ -2016,6 +2036,7 @@ export interface FileRouteTypes {
     | '/v1/agent-templates/'
     | '/v1/sites/'
     | '/v1/skills/'
+    | '/v2/server-claims/'
     | '/scim/v2/Users/$userId'
     | '/v1/agent-templates/$templateId/avatar'
     | '/v1/agent-templates/$templateId/card'
@@ -2031,8 +2052,8 @@ export interface FileRouteTypes {
     | '/v1/me/license/plan'
     | '/v1/me/license/renewal'
     | '/v1/me/license/users'
-    | '/v1/mobile-auth/devices/$sessionId'
     | '/v1/mobile-auth/company/exchange'
+    | '/v1/mobile-auth/devices/$sessionId'
     | '/v1/mobile-auth/email/verify'
     | '/v1/skills/$skillId/card'
     | '/v1/skills/$skillId/content'
@@ -2184,6 +2205,7 @@ export interface FileRouteTypes {
     | '/v1/agent-templates/mine'
     | '/v1/auth/logout'
     | '/v1/avatars/$userId'
+    | '/v1/feedback/similar'
     | '/v1/github/installation-tokens'
     | '/v1/me/analytics'
     | '/v1/me/avatar'
@@ -2218,6 +2240,7 @@ export interface FileRouteTypes {
     | '/v1/agent-templates'
     | '/v1/sites'
     | '/v1/skills'
+    | '/v2/server-claims'
     | '/scim/v2/Users/$userId'
     | '/v1/agent-templates/$templateId/avatar'
     | '/v1/agent-templates/$templateId/card'
@@ -2233,8 +2256,8 @@ export interface FileRouteTypes {
     | '/v1/me/license/plan'
     | '/v1/me/license/renewal'
     | '/v1/me/license/users'
-    | '/v1/mobile-auth/devices/$sessionId'
     | '/v1/mobile-auth/company/exchange'
+    | '/v1/mobile-auth/devices/$sessionId'
     | '/v1/mobile-auth/email/verify'
     | '/v1/skills/$skillId/card'
     | '/v1/skills/$skillId/content'
@@ -2390,6 +2413,7 @@ export interface FileRouteTypes {
     | '/v1/agent-templates/mine'
     | '/v1/auth/logout'
     | '/v1/avatars/$userId'
+    | '/v1/feedback/similar'
     | '/v1/github/installation-tokens'
     | '/v1/me/analytics'
     | '/v1/me/avatar'
@@ -2424,6 +2448,7 @@ export interface FileRouteTypes {
     | '/v1/agent-templates/'
     | '/v1/sites/'
     | '/v1/skills/'
+    | '/v2/server-claims/'
     | '/scim/v2/Users/$userId'
     | '/v1/agent-templates/$templateId/avatar'
     | '/v1/agent-templates/$templateId/card'
@@ -2439,8 +2464,8 @@ export interface FileRouteTypes {
     | '/v1/me/license/plan'
     | '/v1/me/license/renewal'
     | '/v1/me/license/users'
-    | '/v1/mobile-auth/devices/$sessionId'
     | '/v1/mobile-auth/company/exchange'
+    | '/v1/mobile-auth/devices/$sessionId'
     | '/v1/mobile-auth/email/verify'
     | '/v1/skills/$skillId/card'
     | '/v1/skills/$skillId/content'
@@ -2565,7 +2590,7 @@ export interface RootRouteChildren {
   ProvidersRssDotxmlRoute: typeof ProvidersRssDotxmlRoute
   SlackConnectRoute: typeof SlackConnectRoute
   V1ContactRoute: typeof V1ContactRoute
-  V1FeedbackRoute: typeof V1FeedbackRoute
+  V1FeedbackRoute: typeof V1FeedbackRouteWithChildren
   V1MeRoute: typeof V1MeRouteWithChildren
   BrandIndexRoute: typeof BrandIndexRoute
   CompareIndexRoute: typeof CompareIndexRoute
@@ -2615,6 +2640,7 @@ export interface RootRouteChildren {
   V1AgentTemplatesIndexRoute: typeof V1AgentTemplatesIndexRoute
   V1SitesIndexRoute: typeof V1SitesIndexRoute
   V1SkillsIndexRoute: typeof V1SkillsIndexRoute
+  V2ServerClaimsIndexRoute: typeof V2ServerClaimsIndexRoute
   ScimV2UsersUserIdRoute: typeof ScimV2UsersUserIdRoute
   V1AuthCompanyCallbackRoute: typeof V1AuthCompanyCallbackRoute
   V1AuthCompanyExchangeRoute: typeof V1AuthCompanyExchangeRoute
@@ -3231,6 +3257,13 @@ declare module '@tanstack/solid-router' {
       preLoaderRoute: typeof V1AvatarsUserIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/v1/feedback/similar': {
+      id: '/v1/feedback/similar'
+      path: '/similar'
+      fullPath: '/v1/feedback/similar'
+      preLoaderRoute: typeof V1FeedbackSimilarRouteImport
+      parentRoute: typeof V1FeedbackRoute
+    }
     '/v1/github/installation-tokens': {
       id: '/v1/github/installation-tokens'
       path: '/v1/github/installation-tokens'
@@ -3434,6 +3467,13 @@ declare module '@tanstack/solid-router' {
       preLoaderRoute: typeof V2RemoteRouteWakeRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/v2/server-claims/': {
+      id: '/v2/server-claims/'
+      path: '/v2/server-claims'
+      fullPath: '/v2/server-claims/'
+      preLoaderRoute: typeof V2ServerClaimsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/v2/server-claims/redeem': {
       id: '/v2/server-claims/redeem'
       path: '/v2/server-claims/redeem'
@@ -3588,19 +3628,19 @@ declare module '@tanstack/solid-router' {
       preLoaderRoute: typeof V1MeLicenseUsersRouteImport
       parentRoute: typeof V1MeRoute
     }
-    '/v1/mobile-auth/devices/$sessionId': {
-      id: '/v1/mobile-auth/devices/$sessionId'
-      path: '/$sessionId'
-      fullPath: '/v1/mobile-auth/devices/$sessionId'
-      preLoaderRoute: typeof V1MobileAuthDevicesSessionIdRouteImport
-      parentRoute: typeof V1MobileAuthDevicesRoute
-    }
     '/v1/mobile-auth/company/exchange': {
       id: '/v1/mobile-auth/company/exchange'
       path: '/v1/mobile-auth/company/exchange'
       fullPath: '/v1/mobile-auth/company/exchange'
       preLoaderRoute: typeof V1MobileAuthCompanyExchangeRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/v1/mobile-auth/devices/$sessionId': {
+      id: '/v1/mobile-auth/devices/$sessionId'
+      path: '/$sessionId'
+      fullPath: '/v1/mobile-auth/devices/$sessionId'
+      preLoaderRoute: typeof V1MobileAuthDevicesSessionIdRouteImport
+      parentRoute: typeof V1MobileAuthDevicesRoute
     }
     '/v1/mobile-auth/email/verify': {
       id: '/v1/mobile-auth/email/verify'
@@ -4181,6 +4221,18 @@ const TeamsRouteChildren: TeamsRouteChildren = {
 
 const TeamsRouteWithChildren = TeamsRoute._addFileChildren(TeamsRouteChildren)
 
+interface V1FeedbackRouteChildren {
+  V1FeedbackSimilarRoute: typeof V1FeedbackSimilarRoute
+}
+
+const V1FeedbackRouteChildren: V1FeedbackRouteChildren = {
+  V1FeedbackSimilarRoute: V1FeedbackSimilarRoute,
+}
+
+const V1FeedbackRouteWithChildren = V1FeedbackRoute._addFileChildren(
+  V1FeedbackRouteChildren,
+)
+
 interface V1MeRouteChildren {
   V1MeAnalyticsRoute: typeof V1MeAnalyticsRoute
   V1MeAvatarRoute: typeof V1MeAvatarRoute
@@ -4373,7 +4425,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProvidersRssDotxmlRoute: ProvidersRssDotxmlRoute,
   SlackConnectRoute: SlackConnectRoute,
   V1ContactRoute: V1ContactRoute,
-  V1FeedbackRoute: V1FeedbackRoute,
+  V1FeedbackRoute: V1FeedbackRouteWithChildren,
   V1MeRoute: V1MeRouteWithChildren,
   BrandIndexRoute: BrandIndexRoute,
   CompareIndexRoute: CompareIndexRoute,
@@ -4423,6 +4475,7 @@ const rootRouteChildren: RootRouteChildren = {
   V1AgentTemplatesIndexRoute: V1AgentTemplatesIndexRoute,
   V1SitesIndexRoute: V1SitesIndexRoute,
   V1SkillsIndexRoute: V1SkillsIndexRoute,
+  V2ServerClaimsIndexRoute: V2ServerClaimsIndexRoute,
   ScimV2UsersUserIdRoute: ScimV2UsersUserIdRoute,
   V1AuthCompanyCallbackRoute: V1AuthCompanyCallbackRoute,
   V1AuthCompanyExchangeRoute: V1AuthCompanyExchangeRoute,
