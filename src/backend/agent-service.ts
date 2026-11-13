@@ -247,6 +247,7 @@ import { type ChannelImageFile, ChannelImages } from "./channel-images";
 import { ChannelRoutineScheduler } from "./channel-routine-scheduler";
 import { ChannelService } from "./channel-service";
 import type { BundledProviderExecutables } from "./cli";
+import { ContentStore } from "./content/content-store";
 import type { ConversationMarkerExclusions } from "./conversation-read-store";
 import type { ProviderSession } from "./database/provider-sessions";
 import { reportOriginalFailure } from "./effect-boundary";
@@ -1734,6 +1735,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       tasks: this.#tasks,
       drain: this.#drain,
       tables: this.#tables,
+      content: new ContentStore(store.database),
       sidebarLayout: this.#sidebarLayout,
       ...(this.#localSkillTools === undefined ? {} : { localSkillTools: this.#localSkillTools }),
       ...(this.#routineFlowTools === undefined ? {} : { routineFlowTools: this.#routineFlowTools }),

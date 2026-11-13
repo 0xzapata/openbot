@@ -1,0 +1,117 @@
+import { defineMessages } from "../../../message";
+
+export const messages = defineMessages("error.content", {
+  // The content manager: user actions on posts and network accounts. Main sends the English text;
+  // the stored error of a variant is this text too.
+  "error.content.unknownPost": "This post is not known.",
+  "error.content.unknownVariant": "This variant is not known.",
+  "error.content.unknownAccount": "This account is not known.",
+  "error.content.noVariant": "This post has no variant for that network.",
+  "error.content.notPending": "This post does not wait for approval.",
+  "error.content.approveFirst": "Approve this post first.",
+  "error.content.cannotUnapprove": "This post is no longer approved, or a network already has it.",
+  "error.content.timeInFuture": "The time must be in the future.",
+  "error.content.publishing": "OpenBot is posting this now. Wait until it ends.",
+  "error.content.published": "This post is already on a network, so it cannot change.",
+  "error.content.variantLocked": "This network already has the post, or OpenBot is posting it now.",
+  "error.content.skipOnlyDraft": "Only a draft or a queued network can be skipped.",
+  "error.content.notSkipped": "This network is not skipped.",
+  "error.content.retryOnlyFailed": "Only a network that failed can be tried again.",
+  "error.content.unknownDraft": "The file is no longer attached. Attach it again.",
+  "error.content.mediaType":
+    "The file is not a supported image or video. Use PNG, JPEG, WEBP or GIF images up to 20 MB, MP4 or MOV videos up to 1 GB.",
+  "error.content.imageTooLarge": "The image is larger than {size} MB.",
+  "error.content.videoTooLarge": "The video is larger than {size} MB.",
+  "error.content.takesImage": "{network} takes an image, not a video.",
+  "error.content.takesVideo": "{network} takes a video, not an image.",
+  "error.content.mediaCopyFailed": "The file could not be copied into the content manager. Try again.",
+  "error.content.mediaUnreadable": "OpenBot could not read the media file of this post.",
+  "error.content.interrupted": "OpenBot stopped while it posted. Check {network} before you retry.",
+  "error.content.notFinished": "OpenBot could not finish this post. Check {network} before you retry.",
+  "error.content.issueOverLimit": "The text or the title is too long for this network.",
+  "error.content.issueNeedsImage": "This network needs an image.",
+  "error.content.issueNeedsVideo": "This network needs a video.",
+  "error.content.issueNeedsTitle": "This network needs a title.",
+  "error.content.issueImagesOnly": "This network takes only images.",
+  "error.content.issueVideoOnly": "This network takes only a video.",
+  // Accounts and the sign-in.
+  "error.content.accountTaken": "{network} already has a connected account ({handle}). Disconnect it first.",
+  "error.content.notSupported": "OpenBot cannot post to {network} yet.",
+  "error.content.addApp": "Add the {network} app first.",
+  "error.content.addSecret": "The {network} app needs its client secret. Add it first.",
+  "error.content.clientIdMissing": "The client id is missing.",
+  "error.content.portBusy":
+    "OpenBot could not listen on port {port} for the sign-in. Close the program that uses it and try again.",
+  "error.content.browserFailed": "OpenBot could not open the browser.",
+  "error.content.signInTimeout": "The sign-in took too long. Try again.",
+  "error.content.signInCancelled": "The sign-in to the network was cancelled.",
+  "error.content.signInRefused": "The network refused the sign-in. Try again.",
+  "error.content.signInNoCode": "The sign-in sent no code.",
+  "error.content.accountSaveFailed": "OpenBot could not save the account.",
+  "error.content.appsUnreadable": "OpenBot could not read the saved network apps.",
+  "error.content.appsSaveFailed": "OpenBot could not save the network apps.",
+  // One key per network: "Sign in to {network} again." would also match "Sign in to this host again.".
+  "error.content.signInAgainX": "Sign in to X again.",
+  "error.content.signInAgainLinkedIn": "Sign in to LinkedIn again.",
+  "error.content.signInAgainInstagram": "Sign in to Instagram again.",
+  "error.content.signInAgainThreads": "Sign in to Threads again.",
+  "error.content.signInAgainFacebook": "Sign in to Facebook again.",
+  "error.content.signInAgainYouTube": "Sign in to YouTube again.",
+  // The page that the browser shows at the end of a sign-in.
+  "error.content.redirectSignedIn": "OpenBot is connected to the network. You can close this window.",
+  "error.content.redirectRefused": "The network refused the sign-in. Go back to OpenBot and try again.",
+  "error.content.redirectNoSignIn": "No sign-in to a network waits for this. It may have ended.",
+  "error.content.redirectNotSignIn": "This address is not part of a sign-in to a network.",
+  // What a network answered. `{reason}` is the network's own text.
+  "error.content.noAnswer": "{network} did not answer. The post may exist: check {network} before you retry.",
+  "error.content.unreachable": "{network} could not be reached.",
+  "error.content.noToken": "{network} sent no token.",
+  "error.content.noProfile": "{network} sent no profile.",
+  "error.content.noMediaId": "{network} sent no media id.",
+  "error.content.noUploadAddress": "{network} sent no upload address.",
+  "error.content.uploadStateInvalid": "The {network} upload state is not valid.",
+  "error.content.imageFailed": "{network} could not process the image.",
+  "error.content.noPostId": "{network} sent no post id. Check {network} before you retry.",
+  "error.content.needsSecret": "{network} needs the client secret of the app.",
+  "error.content.linkedInImageType": "LinkedIn takes only JPEG, PNG or GIF images. Use another image for LinkedIn.",
+  "error.content.duplicate": "{network} says this post already exists.",
+  "error.content.apiVersionOld": "The {network} API version is too old. Update OpenBot.",
+  "error.content.rateLimited": "{network} limits the posts now.",
+  "error.content.rateLimitedUntil": "{network} limits the posts now. Try again after {time}.",
+  "error.content.rateLimitedLater": "{network} limits the posts now. Try again later.",
+  "error.content.serverError": "{network} had a server error ({status}).",
+  "error.content.refusedPost": "{network} refused the post: {reason}",
+  "error.content.refusedPermission": "{network} refused the request. The app may not have the permission: {reason}",
+  // Step 4: Instagram, Threads, Facebook Pages, YouTube and the image host.
+  "error.content.issueAngleBrackets": "YouTube does not take < or > in the title or the description.",
+  "error.content.instagramJpegOnly": "Instagram takes only JPEG images up to 8 MB. Use another image for Instagram.",
+  "error.content.processingTimeout": "{network} did not finish the post in 24 hours. Check {network} before you retry.",
+  "error.content.uploadIncomplete": "The upload to {network} did not finish. Try again.",
+  "error.content.mediaHostUploadRefused":
+    "The image host refused the upload ({status}). Check the access key, the secret, the endpoint, the bucket, and the date and time of this computer.",
+  "error.content.mediaHostNotPublic":
+    "The image host did not show the file at the public base URL ({status}). Turn on public access for the bucket (the R2 Public Development URL, or a custom domain on the bucket), and give that URL as the public base URL.",
+  "error.content.mediaHostBytesDiffer":
+    "The public base URL sent back a different file. Give the public URL of this bucket.",
+  "error.content.mediaHostUnreachable": "OpenBot could not reach the image host.",
+  "error.content.mediaHostRefused": "The image host refused the request ({status}).",
+  "error.content.mediaHostKey": "OpenBot uses only its own file names on the image host.",
+  "error.content.mediaHostKeysMissing": "Give the access key ID and the secret access key of the image host.",
+  "error.content.mediaHostSaveFailed": "OpenBot could not save the image host.",
+  "error.content.mediaHostCleanup":
+    "OpenBot could not remove an earlier image from the image host, and it stays public until it is removed. Try again in a few minutes.",
+  "error.content.mediaHostCleanupNeedsHost":
+    "An image from an earlier attempt is still public in {bucket}, and OpenBot has no image host for that bucket now. Set up {bucket} again, and OpenBot removes the image.",
+  "error.content.mediaHostDeleteRefused":
+    "The image host did not let OpenBot delete its test file ({status}). Give an access key that can delete in this bucket.",
+  "error.content.mediaHostTimeout":
+    "The image host did not answer in 60 seconds. Check the endpoint and the public base URL.",
+  "error.content.mediaHostCancelled": "The image host check was stopped.",
+  "error.content.instagramNeedsHost": "Instagram needs an image host.",
+  // TODO(loupe): Threads post with an image while no image host is set up
+  "error.content.threadsNeedsHost": "Threads needs an image host for a post with an image.",
+  // TODO(loupe): Facebook sign-in with zero Pages
+  "error.content.facebookNoPage": "No Facebook Page.",
+  // TODO(loupe): Facebook sign-in with more than one Page
+  "error.content.facebookManyPages": "More than one Facebook Page.",
+});

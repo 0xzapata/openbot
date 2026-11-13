@@ -1634,6 +1634,7 @@ export const messages = defineMessages("mobile.server", {
   "mobile.server.update.reason.browserControl": "browser control by an agent",
   "mobile.server.update.reason.updateOperation": "another update step",
   "mobile.server.update.reason.initialization": "the start of OpenBot",
+  "mobile.server.update.reason.contentPost": "a post being published",
   "mobile.server.update.reason.other": "other work",
   "mobile.server.update.actionFailed": "The server action failed.",
   "mobile.server.update.unavailable": "Connect to this server to see its OpenBot updates.",

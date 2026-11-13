@@ -1237,6 +1237,7 @@ export const messages = {
   "mobile.server.update.reason.browserControl": "il controllo del browser da parte di un agente",
   "mobile.server.update.reason.updateOperation": "un altro passaggio dell'aggiornamento",
   "mobile.server.update.reason.initialization": "l'avvio di OpenBot",
+  "mobile.server.update.reason.contentPost": "un post in pubblicazione",
   "mobile.server.update.reason.other": "altro lavoro",
   "mobile.server.update.actionFailed": "L'azione del server non è riuscita.",
   "mobile.server.update.unavailable": "Connettiti a questo server per vedere i suoi aggiornamenti di OpenBot.",

@@ -693,6 +693,7 @@ export const messages = {
   "server.update.reason.browserControl": "שליטה בדפדפן על ידי סוכן",
   "server.update.reason.updateOperation": "שלב עדכון אחר",
   "server.update.reason.initialization": "הפעלת OpenBot",
+  "server.update.reason.contentPost": "פוסט בתהליך פרסום",
   "server.update.reason.other": "עבודה אחרת",
   "server.restartNotice.waitingTitle": "{name} יופעל מחדש כדי להתקין עדכון",
   "server.restartNotice.waitingVersionTitle": "{name} יופעל מחדש כדי להתקין את OpenBot {version}",

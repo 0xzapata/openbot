@@ -660,6 +660,7 @@ export const messages = {
   "server.update.reason.browserControl": "에이전트의 브라우저 제어",
   "server.update.reason.updateOperation": "다른 업데이트 단계",
   "server.update.reason.initialization": "OpenBot 시작",
+  "server.update.reason.contentPost": "게시 중인 게시물",
   "server.update.reason.other": "기타 작업",
   // A notice to every member when a joined server restarts into an update. {name} is the server.
   "server.restartNotice.waitingTitle": "업데이트를 설치하기 위해 {name}이(가) 다시 시작돼요",

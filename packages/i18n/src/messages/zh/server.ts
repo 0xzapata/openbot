@@ -642,6 +642,7 @@ export const messages = {
   "server.update.reason.browserControl": "助手进行的浏览器控制",
   "server.update.reason.updateOperation": "另一个更新步骤",
   "server.update.reason.initialization": "OpenBot 启动过程",
+  "server.update.reason.contentPost": "帖子发布",
   "server.update.reason.other": "其他工作",
   // A notice to every member when a joined server restarts into an update. {name} is the server.
   "server.restartNotice.waitingTitle": "{name} 将重启以安装更新",

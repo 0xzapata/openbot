@@ -7,6 +7,7 @@ import { migrateOpenBotDatabase } from "./openbot-database-schema";
 // or its marker; a newer or incomplete history is accepted; a sender can point to no connection, or
 // have a kind other than contact or group; a connection with senders can be deleted and leave them
 // behind. These fixtures cover each.
+// Migration 60 runs last and adds the empty content tables.
 const databases: DatabaseSync[] = [];
 afterEach(() => {
   for (const db of databases.splice(0)) db.close();
@@ -74,7 +75,7 @@ function senderTables(db: DatabaseSync) {
 }
 
 function expectHealthy(db: DatabaseSync): void {
-  expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 59 });
+  expect(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 61 });
   expect(db.prepare("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
   expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
   expect(db.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
@@ -99,6 +100,9 @@ describe("messaging allowed senders migration", () => {
         browser_profile_proxies: [],
         agent_usage_skill_loads: [],
         projection_messaging_pings: [],
+        content_accounts: [],
+        content_posts: [],
+        content_variants: [],
       });
       expectHealthy(db);
     },
@@ -125,6 +129,9 @@ describe("messaging allowed senders migration", () => {
       browser_profile_proxies: [],
       agent_usage_skill_loads: [],
       projection_messaging_pings: [],
+      content_accounts: [],
+      content_posts: [],
+      content_variants: [],
     });
     expectHealthy(db);
   });
@@ -133,9 +140,9 @@ describe("messaging allowed senders migration", () => {
     const db = databaseAt(50);
     seed(db, 50);
     const before = contents(db);
-    db.exec("INSERT INTO schema_migrations VALUES(60,'now')");
+    db.exec("INSERT INTO schema_migrations VALUES(62,'now')");
     expect(() => migrateOpenBotDatabase(db)).toThrow("newer than this application supports");
-    db.exec("DELETE FROM schema_migrations WHERE version=60; DELETE FROM schema_migrations WHERE version=20");
+    db.exec("DELETE FROM schema_migrations WHERE version=62; DELETE FROM schema_migrations WHERE version=20");
     expect(() => migrateOpenBotDatabase(db)).toThrow("missing version 20");
     expect(contents(db)).toEqual(before);
     expect(senderTables(db)).toEqual([]);

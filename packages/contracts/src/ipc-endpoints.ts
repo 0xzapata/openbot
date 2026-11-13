@@ -275,6 +275,23 @@ import type {
 } from "./ipc-chat-channels";
 import type { ClaudeUserSetupSetting } from "./ipc-claude-user-setup";
 import type {
+  ContentAccountsState,
+  ContentBeginConnectInput,
+  ContentCalendar,
+  ContentCalendarInput,
+  ContentCancelConnectInput,
+  ContentChangedEvent,
+  ContentCreatePostInput,
+  ContentDeletePostInput,
+  ContentDisconnectInput,
+  ContentListPostsInput,
+  ContentMediaHostInput,
+  ContentPostView,
+  ContentPublishNowInput,
+  ContentSchedulePostInput,
+  ContentUpdatePostInput,
+} from "./ipc-content";
+import type {
   CancelMessageLinkInput,
   ConversationFileSearchPage,
   ConversationPage,
@@ -1484,6 +1501,27 @@ export const IPC_ENDPOINTS = {
     create: request<undefined, RoutineFeed>()("routine-feed:create"),
     remove: request<undefined, RoutineFeed>()("routine-feed:remove"),
   },
+  // The content manager of this computer. Local only: the posts, accounts and tokens stay here. No
+  // answer holds a token, a client secret or a path. `beginConnect` ends when the sign-in ends;
+  // `disconnectAccount` with `cancel` stops a sign-in that waits for the browser. `saveMediaHost` ends
+  // when the image host check ends; `cancelMediaHostCheck` stops it.
+  content: {
+    listAccounts: request<undefined, ContentAccountsState>()("content:list-accounts"),
+    beginConnect: request<ContentBeginConnectInput, ContentAccountsState>()("content:begin-connect"),
+    saveMediaHost: request<ContentMediaHostInput, ContentAccountsState>()("content:save-media-host"),
+    cancelMediaHostCheck: request<undefined, ContentAccountsState>()("content:cancel-media-host-check"),
+    disconnectAccount: request<ContentDisconnectInput | ContentCancelConnectInput, ContentAccountsState>()(
+      "content:disconnect-account",
+    ),
+    listPosts: request<ContentListPostsInput, ContentPostView[]>()("content:list-posts"),
+    createPost: request<ContentCreatePostInput, ContentPostView>()("content:create-post"),
+    updatePost: request<ContentUpdatePostInput, ContentPostView>()("content:update-post"),
+    deletePost: request<ContentDeletePostInput, void>()("content:delete-post"),
+    schedulePost: request<ContentSchedulePostInput, ContentPostView>()("content:schedule-post"),
+    publishNow: request<ContentPublishNowInput, ContentPostView>()("content:publish-now"),
+    calendar: request<ContentCalendarInput, ContentCalendar>()("content:calendar"),
+    changed: event<ContentChangedEvent>()("content:changed"),
+  },
   billing: {
     getState: request<undefined, BillingState>()("billing:get-state"),
     openPortal: request<BillingPortalRequest, void>()("billing:open-portal"),
@@ -2241,6 +2279,7 @@ export const IPC_GROUP_PATHS = {
   vault: "vault",
   hostedSites: "hostedSites",
   routineFeed: "routineFeed",
+  content: "content",
   routineFlows: "routineFlows",
   workflows: "workflows",
   routineResults: "routineResults",

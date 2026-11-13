@@ -222,6 +222,7 @@
     "test:browser:canva-live": "bun scripts/browser-smoke.ts --canva-live",
     "test:browser:framer-live": "bun scripts/browser-smoke.ts --framer-live",
     "test:codex": "bun scripts/codex-doctor.ts --strict",
+    "test:content-status-map": "bun scripts/content-status-map-e2e.ts",
     "test:acp-directories": "bun scripts/acp-additional-directories-e2e.ts",
     "test:acp-flavors": "bun scripts/acp-flavor-e2e.ts",
     "test:acp-subagents": "bun scripts/acp-subagents-e2e.ts",

@@ -17,6 +17,7 @@ import { AGENT_WAIT_SCHEMA_SQL } from "./agent-waits/agent-wait-schema";
 import { BROWSER_PROFILE_SCHEMA_SQL } from "./browser-profiles/browser-profile-schema";
 import { BROWSER_PROXY_SCHEMA_SQL } from "./browser-profiles/browser-proxy-schema";
 import { CHANNEL_SCHEMA_SQL, CHANNEL_SETTINGS_SCHEMA_SQL } from "./channel-schema";
+import { CONTENT_SCHEMA_SQL } from "./content/content-schema";
 import { AGENT_SKILL_LOADS_SCHEMA_SQL } from "./database/agent-skill-loads-schema";
 import { DELETED_THREAD_MESSAGES_SCHEMA_SQL } from "./database/deleted-thread-messages-schema";
 import { PROVIDER_HISTORY_SCHEMA_SQL } from "./database/provider-history-schema";
@@ -434,6 +435,12 @@ const V35_ROUTINE_RUN_SOURCE_COLUMN_SQL = `run_source TEXT CHECK(run_source IS N
 // run in their channel and have no such column. ADD COLUMN puts it after the migration 33 column.
 const V57_AGENT_ROUTINE_RUN_IN_COLUMN_SQL = `run_in TEXT NOT NULL DEFAULT 'chat' CHECK(run_in IN ('chat', 'thread'))`;
 
+// Migration 61 stores the link that a network returns for a published post. Frozen with the migration. No
+// default: a variant published before it has no link. ADD COLUMN puts it after `last_event_sequence`, before
+// the UNIQUE constraint that ends the table, so the latest schema puts it there as well.
+const V61_CONTENT_VARIANT_URL_COLUMN_SQL = "external_url TEXT";
+const V60_CONTENT_VARIANTS_END_SQL = "    last_event_sequence INTEGER NOT NULL,\n    UNIQUE(post_id, platform)\n";
+
 // Migration 40 stores the shown-order keys of each thread message, so a page reads an index range rather
 // than sorting the whole thread (#2226). Frozen with the migration; `database/thread-message-order.ts`
 // keeps them current, and every write to the table must call it. No default: a key of 0 or '' would look
@@ -633,7 +640,12 @@ const LATEST_SCHEMA_SQL =
   DELETED_THREAD_MESSAGES_SCHEMA_SQL +
   BROWSER_PROXY_SCHEMA_SQL +
   AGENT_SKILL_LOADS_SCHEMA_SQL +
-  MESSAGING_PINGS_SCHEMA_SQL;
+  MESSAGING_PINGS_SCHEMA_SQL +
+  substituteOnce(
+    CONTENT_SCHEMA_SQL,
+    V60_CONTENT_VARIANTS_END_SQL,
+    `    last_event_sequence INTEGER NOT NULL,\n    ${V61_CONTENT_VARIANT_URL_COLUMN_SQL},\n    UNIQUE(post_id, platform)\n`,
+  );
 
 /** The end of the thread message table with the migration 40 columns before its PRIMARY KEY constraint. */
 function withThreadMessageOrderColumns(tableEnd: string): string {
@@ -987,6 +999,18 @@ const MIGRATIONS: readonly OpenBotMigration[] = [
     // Only creates a table, so no foreign-key pause and no vacuum. No post was recorded as a ping
     // before it, so the table starts empty, and every thread routes its replies as before.
     up: (db) => db.exec(MESSAGING_PINGS_SCHEMA_SQL),
+  },
+  {
+    version: 60,
+    // Only creates tables and their indexes, so no foreign-key pause and no vacuum. No post or account
+    // existed before it, so the tables start empty and no other row changes.
+    up: (db) => db.exec(CONTENT_SCHEMA_SQL),
+  },
+  {
+    version: 61,
+    // Adds one column with no default: no rebuild, so no foreign-key pause and no vacuum. Every existing
+    // variant gets null, which is a post with no link. No link is backfilled.
+    up: addContentVariantUrl,
   },
 ];
 
@@ -1402,6 +1426,14 @@ function addAgentRoutineRunPlace(db: DatabaseSync): void {
   const columns = db.prepare("PRAGMA table_info(projection_agent_routines)").all();
   if (columns.some((existing) => isDynamicRecord(existing) && existing.name === "run_in")) return;
   db.exec(`ALTER TABLE projection_agent_routines ADD COLUMN ${V57_AGENT_ROUTINE_RUN_IN_COLUMN_SQL}`);
+}
+
+// Migration 61 adds the link of a published post.
+function addContentVariantUrl(db: DatabaseSync): void {
+  // A development profile that ran this version before it shipped has the column already.
+  const columns = db.prepare("PRAGMA table_info(content_variants)").all();
+  if (columns.some((existing) => isDynamicRecord(existing) && existing.name === "external_url")) return;
+  db.exec(`ALTER TABLE content_variants ADD COLUMN ${V61_CONTENT_VARIANT_URL_COLUMN_SQL}`);
 }
 
 // Migration 28 removes the provider CHECK. It rebuilds the table with no guard: every shipped table has the

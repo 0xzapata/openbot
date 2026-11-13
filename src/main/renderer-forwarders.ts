@@ -603,6 +603,11 @@ export function createRendererForwarders({
     for (const window of appWindows()) sendToRenderer(window, IPC_ENDPOINTS.vault.changed, state);
   }
 
+  /** After each content write that commits: the screens read the post or the accounts again. */
+  function forwardContentChanged(event: import("@openbot/contracts/ipc").ContentChangedEvent): void {
+    for (const window of appWindows()) sendToRenderer(window, IPC_ENDPOINTS.content.changed, event);
+  }
+
   function forwardHostStatus(status: import("@openbot/contracts/ipc").HostStatus): void {
     const remoteServers = getRemoteServerManager();
     const servers = remoteServers ? withLocalHostSummary(remoteServers.list(), status) : null;
@@ -681,6 +686,7 @@ export function createRendererForwarders({
     forwardBitwardenConnectorStatus,
     forwardPasswordManagerStatus,
     forwardVaultState,
+    forwardContentChanged,
     forwardHostStatus,
     forwardRemoteDesktopSessions,
     forwardServers,

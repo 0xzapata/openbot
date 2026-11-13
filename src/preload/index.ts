@@ -239,6 +239,13 @@ import {
   decodeComputerUseState,
 } from "./computer-use-decoding";
 import {
+  decodeContentAccountsState,
+  decodeContentCalendar,
+  decodeContentChanged,
+  decodeContentPost,
+  decodeContentPosts,
+} from "./content-decoding";
+import {
   decodeAgentTask,
   decodeAgentTaskReadState,
   decodeAgentTaskReadStates,
@@ -1074,6 +1081,21 @@ const openbotApi: OpenBotDesktopApi = {
     get: decodeRoutineFeed,
     create: decodeRoutineFeed,
     remove: decodeRoutineFeed,
+  }),
+  content: bridgeGroup(IPC_ENDPOINTS.content, {
+    listAccounts: decodeContentAccountsState,
+    beginConnect: decodeContentAccountsState,
+    saveMediaHost: decodeContentAccountsState,
+    cancelMediaHostCheck: decodeContentAccountsState,
+    disconnectAccount: decodeContentAccountsState,
+    listPosts: decodeContentPosts,
+    createPost: decodeContentPost,
+    updatePost: decodeContentPost,
+    deletePost: decodeVoid,
+    schedulePost: decodeContentPost,
+    publishNow: decodeContentPost,
+    calendar: decodeContentCalendar,
+    changed: decodeContentChanged,
   }),
   billing: bridgeGroup(IPC_ENDPOINTS.billing, {
     getState: decodeBillingState,

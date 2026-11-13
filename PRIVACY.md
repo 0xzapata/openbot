@@ -1203,6 +1203,50 @@ routine's model provider, as other routine input does.
 Change a routine to a schedule, or delete it, to stop its URL. Deleting a routine deletes its
 receipts.
 
+## Content manager
+
+The content manager keeps social media posts, their text for each network, their image or video,
+and their status in the host's local SQLite database. For a published post, it also keeps the post ID
+and the https link that the network returned, so that the user can open the post. It copies each media file to the
+`content-media` folder in OpenBot's data folder. An agent can write a post, but the post is sent
+only after the user approves it.
+
+The user can connect an X account, a LinkedIn member profile, an Instagram professional account, a
+Threads profile, one Facebook Page and a YouTube channel. The user enters the client ID, and where the
+network needs it the client secret, of an app that the user registers with that network: X, LinkedIn,
+Meta (Instagram, Threads and Facebook) or Google (YouTube). OpenBot ships no app credentials. The
+sign-in opens the system browser, and the network sends the grant back to `127.0.0.1` on this
+computer. OpenBot encrypts the client secret, the access token and the refresh token with the
+operating system's secret storage, and stores them on this computer only. Management screens do not
+return them.
+
+At the scheduled time, or when the user publishes a post at once, OpenBot sends the network's text and
+the media file of that post to the network that the user chose: X (`api.x.com`), LinkedIn
+(`api.linkedin.com`), Facebook (`graph.facebook.com`), Instagram (`graph.instagram.com`), Threads
+(`graph.threads.com`) or YouTube (`www.googleapis.com`). To sign in, it also reads the account's ID,
+name and handle, and for Facebook the name and ID of the one Page that the user manages. A published
+post is subject to the network's own terms and privacy policy, and deleting it in OpenBot does not
+delete it from the network.
+
+Instagram and Threads take an image only from a public web address that Meta downloads. For these two
+networks, the user can set up an image host: a Cloudflare R2 bucket that the user owns. The user enters
+the bucket's address, its public address and an access key, and OpenBot encrypts the access key and its
+secret like the tokens above. OpenBot uploads an image to the bucket only while it publishes one
+Instagram or Threads post that the user chose to send, and only that post's own image. It uploads
+nothing for drafts, previews, approvals, schedules or any post that the user did not choose to send, and
+nothing in the background. The image gets a random name that holds no file name and no ID of the user,
+the agent or the post. Meta downloads it from the public address. OpenBot then deletes it, after the
+post succeeds and also after it fails. If a delete fails, or OpenBot stops during a publish, OpenBot
+deletes the image at its next start. OpenBot deletes only the images that it uploaded, one at a time,
+and never lists or empties the bucket. When the user saves the image host settings, OpenBot uploads one
+small check file, reads it back from the public address, and deletes it. While an image is in the
+bucket, anyone who knows its random address can read it.
+
+No other data leaves the computer for this feature.
+
+Deleting an agent keeps the posts it wrote. Disconnecting an account deletes its tokens and keeps
+its posts.
+
 ## Workflows
 
 A workflow is a graph of steps that the user draws on a canvas. The host stores each workflow, its

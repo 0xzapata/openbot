@@ -1674,6 +1674,7 @@ export const messages = {
   "mobile.server.update.reason.browserControl": "تحكم وكيل في المتصفح",
   "mobile.server.update.reason.updateOperation": "خطوة تحديث أخرى",
   "mobile.server.update.reason.initialization": "بدء تشغيل OpenBot",
+  "mobile.server.update.reason.contentPost": "منشور قيد النشر",
   "mobile.server.update.reason.other": "عمل آخر",
   "mobile.server.update.actionFailed": "فشل إجراء الخادم.",
   "mobile.server.update.unavailable": "اتصل بهذا الخادم لرؤية تحديثات OpenBot الخاصة به.",

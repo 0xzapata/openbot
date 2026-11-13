@@ -1210,6 +1210,7 @@ export const messages = {
   "mobile.server.update.reason.browserControl": "browserbesturing door een agent",
   "mobile.server.update.reason.updateOperation": "een andere updatestap",
   "mobile.server.update.reason.initialization": "het opstarten van OpenBot",
+  "mobile.server.update.reason.contentPost": "het publiceren van een post",
   "mobile.server.update.reason.other": "ander werk",
   "mobile.server.update.actionFailed": "De serveractie is mislukt.",
   "mobile.server.update.unavailable": "Maak verbinding met deze server om de OpenBot-updates te zien.",

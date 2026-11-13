@@ -56,6 +56,7 @@ import type { AgentWaits } from "../agent-waits/agent-waits";
 import { attachmentCall, attachmentFailure } from "../attachment-effects";
 import { OPENBOT_BROWSER_NAMESPACE } from "../browser-tools";
 import type { ChannelService } from "../channel-service";
+import type { ContentStore } from "../content/content-store";
 import type { ProviderSession } from "../database/provider-sessions";
 import type { MailboxStore } from "../mailbox-store";
 import { agentMcpServers, codexDeferredMcpServers } from "../mcp-provider-shapes";
@@ -100,6 +101,7 @@ import {
   listChannelsToolSchema,
 } from "./channel-agent-tools";
 import type { ChatVisualPreviewHost } from "./chat-visual-preview";
+import { handleContentTool } from "./content-tools";
 import type { ConversationRuntime } from "./conversation-runtime";
 import { handleDataTool } from "./data-tools";
 import { responseAttachmentMessageId, visualReplyFileName, visualReplyMessageId } from "./delivery-content";
@@ -293,6 +295,8 @@ export interface OpenBotToolRouterOptions {
   tasks: AgentTasks;
   drain: DrainScheduler;
   tables: AgentTables | null;
+  /** The content manager's posts, for `content_create_post`; null where nothing holds them. */
+  content?: ContentStore | null | undefined;
   sidebarLayout: AgentSidebar | null;
   localSkillTools?: (() => LocalSkillTools) | undefined;
   routineFlowTools?: (() => RoutineFlowTools) | undefined;
@@ -343,6 +347,7 @@ export class OpenBotToolRouter {
   readonly #tasks: AgentTasks;
   readonly #drain: DrainScheduler;
   readonly #tables: AgentTables | null;
+  readonly #content: ContentStore | null;
   readonly #sidebarLayout: AgentSidebar | null;
   readonly #localSkillTools: (() => LocalSkillTools) | undefined;
   readonly #routineFlowTools: (() => RoutineFlowTools) | undefined;
@@ -385,6 +390,7 @@ export class OpenBotToolRouter {
     this.#tasks = options.tasks;
     this.#drain = options.drain;
     this.#tables = options.tables;
+    this.#content = options.content ?? null;
     this.#sidebarLayout = options.sidebarLayout;
     this.#localSkillTools = options.localSkillTools;
     this.#routineFlowTools = options.routineFlowTools;
@@ -1581,6 +1587,14 @@ export class OpenBotToolRouter {
 
     const tableResult = yield* handleDataTool(params.tool, params.arguments, senderAgentId, this.#tables);
     if (tableResult) return tableResult;
+
+    if (this.#content) {
+      const contentResult = yield* handleContentTool(params.tool, params.arguments, senderAgentId, {
+        content: this.#content,
+        attachments: this.#attachments,
+      });
+      if (contentResult) return contentResult;
+    }
 
     if (params.tool === "suggest_marketplace_app") {
       const args = params.arguments;

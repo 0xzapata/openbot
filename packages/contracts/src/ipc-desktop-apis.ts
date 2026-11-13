@@ -85,6 +85,7 @@ export type OnePasswordConnectorDesktopApi = GroupApi<IpcEndpoints["onePasswordC
 export type BillingDesktopApi = GroupApi<IpcEndpoints["billing"]>;
 export type LicenseDesktopApi = GroupApi<IpcEndpoints["license"]>;
 export type RoutineFeedDesktopApi = GroupApi<IpcEndpoints["routineFeed"]>;
+export type ContentDesktopApi = GroupApi<IpcEndpoints["content"]>;
 
 export type HostedServersDesktopApi = GroupApi<IpcEndpoints["hostedServers"]>;
 

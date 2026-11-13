@@ -1235,6 +1235,7 @@ export const messages = {
   "mobile.server.update.reason.browserControl": "bir ajan tarafından tarayıcı kontrolü",
   "mobile.server.update.reason.updateOperation": "başka bir güncelleme adımı",
   "mobile.server.update.reason.initialization": "OpenBot'un başlatılması",
+  "mobile.server.update.reason.contentPost": "bir gönderinin yayımlanması",
   "mobile.server.update.reason.other": "diğer çalışmalar",
   "mobile.server.update.actionFailed": "Sunucu eylemi başarısız oldu.",
   "mobile.server.update.unavailable": "OpenBot güncellemelerini görmek için bu sunucuya bağlanın.",

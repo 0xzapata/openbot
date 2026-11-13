@@ -139,6 +139,16 @@ export const INPUT_LIMITS = {
   // enrollment. The cap stays small; single-use invitations keep the larger budget.
   maxPermanentInvites: 5,
   sessionsPerMember: 10,
+  // The content manager. A YouTube title has at most 100 characters.
+  contentPostBody: 64_000,
+  contentVariantTitle: 100,
+  contentImageBytes: 20 * 1024 * 1024,
+  contentVideoBytes: 1024 * 1024 * 1024,
+  // Posts of one agent that wait for the user's approval, so an agent cannot fill the queue.
+  contentPendingPostsPerAgent: 50,
+  // One page of the content list, and the longest calendar range in days.
+  contentPostsPage: 100,
+  contentCalendarDays: 62,
 } as const;
 
 // Active members of one host with no plan and no entitled license of its owner, owner included: the

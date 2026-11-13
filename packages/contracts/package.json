@@ -58,6 +58,7 @@
     "./plugin-links": "./src/plugin-links.ts",
     "./runtime-values": "./src/runtime-values.ts",
     "./ipc-decoding": "./src/ipc-decoding.ts",
+    "./ipc-content": "./src/ipc-content.ts",
     "./remote-control-plane": "./src/remote-control-plane.ts",
     "./signal-protocol/auth-events": "./src/signal-protocol/auth-events.ts",
     "./signal-protocol/decode": "./src/signal-protocol/decode.ts",

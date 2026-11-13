@@ -10,6 +10,7 @@ import { AgentApiKeys } from "../backend/agent-api-keys";
 import { AgentDatabaseSupervisor } from "../backend/agent-data/agent-database-supervisor";
 import { AgentTables } from "../backend/agent-data/agent-tables";
 import { AgentRoutineStore } from "../backend/agent-routine-store";
+import { ContentStore } from "../backend/content/content-store";
 import { diskRestoreEnded, diskRestoring } from "../backend/disk-restore";
 import { DiscordConnectFailed, toDiscordConnectFailed } from "../backend/messaging/discord/discord-connect";
 import { SlackConnectFailed, toSlackConnectFailed } from "../backend/messaging/slack/slack-connect";
@@ -35,6 +36,19 @@ import {
   browserProxyConnection,
   createBrowserProfileService,
 } from "./browser-profile-service";
+import {
+  CONTENT_APPS_FILE,
+  CONTENT_MEDIA_HOST_FILE,
+  ContentAccounts,
+  contentCallbackListener,
+} from "./content/content-accounts";
+import { R2MediaHost } from "./content/content-media-host";
+import { ContentPublisher } from "./content/content-publisher";
+import { ContentService } from "./content/content-service";
+import { LinkedInAdapter } from "./content/linkedin-adapter";
+import { FacebookPageAdapter, InstagramAdapter, ThreadsAdapter } from "./content/meta-adapters";
+import { XAdapter } from "./content/x-adapter";
+import { YouTubeAdapter } from "./content/youtube-adapter";
 import { feedbackFacts, feedbackSender } from "./feedback";
 import { HostReleaseService, readInstallationMode } from "./host-release-service";
 import {
@@ -87,6 +101,7 @@ import type {
   CapabilityState,
   CentralAuthState,
   ComputerUseState,
+  ContentChangedEvent,
   ProviderRuntimeSnapshot,
   SpeechModelStatus,
   VoiceModelStatus,
@@ -558,6 +573,8 @@ const TEARDOWN_ORDER = {
   // Before the agent service, so no script starts a run while the service stops.
   automation: 108,
   storageUsage: 109,
+  // Before the agent service and the database: a publish that it cuts off fails before the database closes.
+  contentPublisher: 109.5,
   service: 110,
   mcpOAuth: 111,
   analytics: 112,
@@ -611,6 +628,7 @@ export interface ApplicationServiceContext {
   forwardSpeechModelStatus: (status: SpeechModelStatus) => void;
   forwardVoiceServerSettings: (settings: VoiceServerSettings | null) => void;
   forwardWorkflowNotice: (notice: WorkflowNotice) => void;
+  forwardContentChanged: (event: ContentChangedEvent) => void;
   prepareForUpdateInstall: () => Promise<void>;
   /** True once a quit starts, also before this function returns. See `CuaDriverRuntimeOptions.quitting`. */
   quitting: () => boolean;
@@ -712,6 +730,7 @@ export interface ApplicationServices {
   license: LicenseDesktopService;
   hostedServers: HostedServerDesktopService;
   routineFeed: RoutineFeedServer;
+  content: ContentService;
   events: HostEventsService;
   eventsRuntime: HostEventsRuntime;
   /** The terminal control of a self-hosted server. Null in every other build. */
@@ -1015,6 +1034,7 @@ export async function createApplicationServices({
   forwardSpeechModelStatus,
   forwardVoiceServerSettings,
   forwardWorkflowNotice,
+  forwardContentChanged,
   prepareForUpdateInstall,
   quitting,
 }: ApplicationServiceContext): Promise<ApplicationServices> {
@@ -1946,6 +1966,60 @@ export async function createApplicationServices({
   await Effect.runPromise(agentApiKeys.syncVault().pipe(Effect.ignore));
   // The schedule triggers of workflows share the routine timer; built after the workflows below.
   let workflowTriggers: WorkflowTriggers | null = null;
+  // The content publisher shares the routine timer. A user write that queues a post plans the timer again;
+  // `service` and `contentAccounts` are built below, and nothing queues a post before they exist.
+  const contentStore = new ContentStore(
+    store.database,
+    () => service.armRoutines(),
+    forwardContentChanged,
+    () => contentAccounts.platforms,
+  );
+  // Before the timer can fire: a post that a restart cut off fails and waits for the user.
+  contentStore.recoverInterrupted();
+  const contentAdapterOptions = {
+    fetch,
+    now: () => new Date(),
+    sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+  };
+  const contentAccounts = new ContentAccounts({
+    store: contentStore,
+    cipher: secretCipher,
+    appsPath: join(app.getPath("userData"), CONTENT_APPS_FILE),
+    // Each network with an adapter can be queued: `platforms` derives the publishable list from these.
+    adapters: [
+      new XAdapter(contentAdapterOptions),
+      new LinkedInAdapter(contentAdapterOptions),
+      new InstagramAdapter(contentAdapterOptions),
+      new ThreadsAdapter(contentAdapterOptions),
+      new FacebookPageAdapter(contentAdapterOptions),
+      new YouTubeAdapter(contentAdapterOptions),
+    ],
+    mediaHostPath: join(app.getPath("userData"), CONTENT_MEDIA_HOST_FILE),
+    mediaHost: (settings) => new R2MediaHost({ fetch, now: () => new Date(), settings }),
+    openExternal: openLink,
+    listen: contentCallbackListener(language),
+    now: () => new Date(),
+  });
+  // Before the timer can fire: without its host, Instagram is not publishable.
+  await Effect.runPromise(contentAccounts.loadMediaHost());
+  const contentPublisher = new ContentPublisher({
+    store: contentStore,
+    accounts: contentAccounts,
+    now: () => new Date(),
+    rearm: () => service.armRoutines(),
+  });
+  teardown.push(TEARDOWN_ORDER.contentPublisher, "the content publisher", () =>
+    Effect.runPromise(contentPublisher.dispose()),
+  );
+  // Removes the image host objects that a crash or a failed removal left. It does not hold up the start.
+  void Effect.runPromise(contentPublisher.releaseHostedMedia());
+  const content = new ContentService({
+    store: contentStore,
+    accounts: contentAccounts,
+    drafts: mailbox,
+    now: () => new Date(),
+    releaseHostedMedia: (variantId) => contentPublisher.releaseHostedMedia(variantId),
+  });
   // Load the local catalog before telemetry starts so tool steps and inventory use the same names.
   // Agents read it too, for the state of a Marketplace app they suggest.
   const catalogPluginServers = await Effect.runPromise(
@@ -2079,7 +2153,7 @@ export async function createApplicationServices({
     responseStyle: () => serverPersonality.responseStyle(),
     timezone: () => serverTimezone.effective(),
     // `workflowTriggers` is built later, after the workflows.
-    extraRoutineSources: () => (workflowTriggers ? [workflowTriggers] : []),
+    extraRoutineSources: () => (workflowTriggers ? [workflowTriggers, contentPublisher] : [contentPublisher]),
     // `host` is built later, after the agent service; a channel tool reads it when it runs.
     channelPersonAgentLevel: (personId, agentId) => host.channelPersonAgentLevel(personId, agentId),
     channelRemotePerson: (personId) => host.channelPersonIsRemote(personId),
@@ -3729,7 +3803,11 @@ export async function createApplicationServices({
   const describeRestartReadiness = (): RestartReadiness =>
     checkRestartReadiness({
       // A workflow model step lives in this process only; agent steps are queued deliveries.
-      agentWork: [...service.hasActiveWork(), ...(workflowRuntime.working() ? ["routine-run"] : [])],
+      agentWork: [
+        ...service.hasActiveWork(),
+        ...(workflowRuntime.working() ? ["routine-run"] : []),
+        ...(contentPublisher.busy() ? ["content-post"] : []),
+      ],
       hostBlockers: host.describeRestartBlockers(),
       activeBrowserControls: browser.getControlState().sessions.length,
       activeFileTransfers: remoteServers.hasActiveTransfers(),
@@ -3992,6 +4070,7 @@ export async function createApplicationServices({
     license,
     hostedServers,
     routineFeed,
+    content,
     events,
     eventsRuntime,
     serverMode,

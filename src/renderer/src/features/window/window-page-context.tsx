@@ -11,6 +11,7 @@ export type WindowPage =
   | "agents"
   | "tasks"
   | "schedule"
+  | "content"
   | "workflows"
   | "usage"
   | "library"
@@ -161,6 +162,10 @@ const context = createSimpleContext({
       openSchedule(source: HTMLElement | null) {
         const serverId = activeServerId();
         if (serverId) usage.openSchedule(serverId, source);
+      },
+      openContent(source: HTMLElement | null) {
+        const serverId = activeServerId();
+        if (serverId) usage.openContent(serverId, source);
       },
       openWorkflows(source: HTMLElement | null) {
         const serverId = activeServerId();

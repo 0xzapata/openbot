@@ -42,6 +42,7 @@ export * from "./ipc-channel-routines";
 export * from "./ipc-chat-channels";
 export * from "./ipc-chat-colors";
 export * from "./ipc-claude-user-setup";
+export * from "./ipc-content";
 export * from "./ipc-conversation-events";
 export * from "./ipc-conversation-memory-changes";
 export * from "./ipc-conversation-messages";

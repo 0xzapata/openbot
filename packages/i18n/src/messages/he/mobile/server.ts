@@ -1650,6 +1650,7 @@ export const messages = {
   "mobile.server.update.reason.browserControl": "שליטה של סוכן בדפדפן",
   "mobile.server.update.reason.updateOperation": "שלב עדכון אחר",
   "mobile.server.update.reason.initialization": "הפעלת OpenBot",
+  "mobile.server.update.reason.contentPost": "פוסט בתהליך פרסום",
   "mobile.server.update.reason.other": "עבודה אחרת",
   "mobile.server.update.actionFailed": "פעולת השרת נכשלה.",
   "mobile.server.update.unavailable": "יש להתחבר לשרת הזה כדי לראות את עדכוני OpenBot שלו.",
