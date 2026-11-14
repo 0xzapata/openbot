@@ -17,7 +17,6 @@ import { AGENT_WAIT_SCHEMA_SQL } from "./agent-waits/agent-wait-schema";
 import { BROWSER_PROFILE_SCHEMA_SQL } from "./browser-profiles/browser-profile-schema";
 import { BROWSER_PROXY_SCHEMA_SQL } from "./browser-profiles/browser-proxy-schema";
 import { CHANNEL_SCHEMA_SQL, CHANNEL_SETTINGS_SCHEMA_SQL } from "./channel-schema";
-import { CONTENT_SCHEMA_SQL } from "./content/content-schema";
 import { AGENT_SKILL_LOADS_SCHEMA_SQL } from "./database/agent-skill-loads-schema";
 import { DELETED_THREAD_MESSAGES_SCHEMA_SQL } from "./database/deleted-thread-messages-schema";
 import { PINNED_THREAD_MESSAGES_SCHEMA_SQL } from "./database/pinned-thread-messages-schema";
@@ -446,12 +445,6 @@ const V60_AGENT_MEMORY_SITE_INDEX_SQL = `
     ON projection_agent_memories(agent_id, site) WHERE site IS NOT NULL;
 `;
 
-// Migration 63 stores the link that a network returns for a published post. Frozen with the migration. No
-// default: a variant published before it has no link. ADD COLUMN puts it after `last_event_sequence`, before
-// the UNIQUE constraint that ends the table, so the latest schema puts it there as well.
-const V63_CONTENT_VARIANT_URL_COLUMN_SQL = "external_url TEXT";
-const V62_CONTENT_VARIANTS_END_SQL = "    last_event_sequence INTEGER NOT NULL,\n    UNIQUE(post_id, platform)\n";
-
 // Migration 40 stores the shown-order keys of each thread message, so a page reads an index range rather
 // than sorting the whole thread (#2226). Frozen with the migration; `database/thread-message-order.ts`
 // keeps them current, and every write to the table must call it. No default: a key of 0 or '' would look
@@ -661,12 +654,7 @@ const LATEST_SCHEMA_SQL =
   AGENT_SKILL_LOADS_SCHEMA_SQL +
   MESSAGING_PINGS_SCHEMA_SQL +
   V60_AGENT_MEMORY_SITE_INDEX_SQL +
-  PINNED_THREAD_MESSAGES_SCHEMA_SQL +
-  substituteOnce(
-    CONTENT_SCHEMA_SQL,
-    V62_CONTENT_VARIANTS_END_SQL,
-    `    last_event_sequence INTEGER NOT NULL,\n    ${V63_CONTENT_VARIANT_URL_COLUMN_SQL},\n    UNIQUE(post_id, platform)\n`,
-  );
+  PINNED_THREAD_MESSAGES_SCHEMA_SQL;
 
 /** The end of the thread message table with the migration 40 columns before its PRIMARY KEY constraint. */
 function withThreadMessageOrderColumns(tableEnd: string): string {
@@ -1040,18 +1028,6 @@ const MIGRATIONS: readonly OpenBotMigration[] = [
     // Only creates a table, so no foreign-key pause and no vacuum. No message was pinned before it,
     // so the table starts empty and every thread shows its messages as before.
     up: (db) => db.exec(PINNED_THREAD_MESSAGES_SCHEMA_SQL),
-  },
-  {
-    version: 62,
-    // Only creates tables and their indexes, so no foreign-key pause and no vacuum. No post or account
-    // existed before it, so the tables start empty and no other row changes.
-    up: (db) => db.exec(CONTENT_SCHEMA_SQL),
-  },
-  {
-    version: 63,
-    // Adds one column with no default: no rebuild, so no foreign-key pause and no vacuum. Every existing
-    // variant gets null, which is a post with no link. No link is backfilled.
-    up: addContentVariantUrl,
   },
 ];
 
@@ -1476,14 +1452,6 @@ function addAgentMemorySite(db: DatabaseSync): void {
   if (!columns.some((existing) => isDynamicRecord(existing) && existing.name === "site"))
     db.exec(`ALTER TABLE projection_agent_memories ADD COLUMN ${V60_AGENT_MEMORY_SITE_COLUMN_SQL}`);
   db.exec(V60_AGENT_MEMORY_SITE_INDEX_SQL);
-}
-
-// Migration 63 adds the link of a published post.
-function addContentVariantUrl(db: DatabaseSync): void {
-  // A development profile that ran this version before it shipped has the column already.
-  const columns = db.prepare("PRAGMA table_info(content_variants)").all();
-  if (columns.some((existing) => isDynamicRecord(existing) && existing.name === "external_url")) return;
-  db.exec(`ALTER TABLE content_variants ADD COLUMN ${V63_CONTENT_VARIANT_URL_COLUMN_SQL}`);
 }
 
 // Migration 28 removes the provider CHECK. It rebuilds the table with no guard: every shipped table has the
