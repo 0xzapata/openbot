@@ -224,7 +224,7 @@ function xPending(data: DynamicRecord, pending: Required<XPending>): ContentPubl
 }
 
 // `startedAt` is optional: pending data from before it has none.
-const pendingSchema = z.object({ mediaId: z.string(), text: z.string(), startedAt: z.string().optional() });
+const pendingSchema = z.object({ mediaId: z.string(), text: z.string(), startedAt: z.string().exactOptional() });
 type XPending = z.infer<typeof pendingSchema>;
 
 /** The data of an upload that X still processes, or null when it is not valid. */

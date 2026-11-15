@@ -35,15 +35,15 @@ const media = z.strictObject({ draftId: id }).nullable();
 
 const variant = z.strictObject({
   platform,
-  body: body.nullable().optional(),
+  body: body.nullable().exactOptional(),
   title: z
     .string()
     .max(INPUT_LIMITS.contentVariantTitle)
     .refine((value) => value.trim().length > 0)
     .nullable()
-    .optional(),
-  media: media.optional(),
-  skipped: z.boolean().optional(),
+    .exactOptional(),
+  media: media.exactOptional(),
+  skipped: z.boolean().exactOptional(),
 });
 
 const variants = z
@@ -63,9 +63,9 @@ function parse<T>(schema: z.ZodType<T>, value: unknown, label: string): T {
 
 const listPosts = z
   .strictObject({
-    from: time.optional(),
-    to: time.optional(),
-    limit: z.number().int().min(1).max(INPUT_LIMITS.contentPostsPage).optional(),
+    from: time.exactOptional(),
+    to: time.exactOptional(),
+    limit: z.number().int().min(1).max(INPUT_LIMITS.contentPostsPage).exactOptional(),
   })
   .refine((input) => !input.from || !input.to || input.from < input.to);
 
@@ -75,10 +75,10 @@ export function parseContentListPosts(value: unknown): ContentListPostsInput {
 
 const createPost = z.strictObject({
   body,
-  media: media.optional(),
-  scheduledFor: time.nullable().optional(),
+  media: media.exactOptional(),
+  scheduledFor: time.nullable().exactOptional(),
   timezone,
-  variants: variants.optional(),
+  variants: variants.exactOptional(),
 });
 
 export function parseContentCreatePost(value: unknown): ContentCreatePostInput {
@@ -89,11 +89,11 @@ const updatePost = z
   .strictObject({
     postId: id,
     action: z.enum(CONTENT_UPDATE_ACTIONS),
-    body: body.optional(),
-    media: media.optional(),
-    timezone: timezone.optional(),
-    variants: variants.optional(),
-    platform: platform.optional(),
+    body: body.exactOptional(),
+    media: media.exactOptional(),
+    timezone: timezone.exactOptional(),
+    variants: variants.exactOptional(),
+    platform: platform.exactOptional(),
   })
   .refine((input) => (input.action === "retry") === (input.platform !== undefined), "Only retry names a network.")
   .refine(
@@ -116,7 +116,7 @@ export function parseContentPublishNow(value: unknown): ContentPublishNowInput {
 }
 
 export function parseContentDeletePost(value: unknown): ContentDeletePostInput {
-  return parse(z.strictObject({ postId: id, leaveHostedMedia: z.literal(true).optional() }), value, "post");
+  return parse(z.strictObject({ postId: id, leaveHostedMedia: z.literal(true).exactOptional() }), value, "post");
 }
 
 const calendar = z
@@ -151,8 +151,8 @@ const mediaHost = z.strictObject({
   // S3 bucket names: 3 to 63 lowercase letters, digits and hyphens, a letter or digit at each end.
   bucket: z.string().regex(/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/u),
   publicBaseUrl: httpsUrl,
-  accessKeyId: mediaHostKey.optional(),
-  secretAccessKey: mediaHostKey.optional(),
+  accessKeyId: mediaHostKey.exactOptional(),
+  secretAccessKey: mediaHostKey.exactOptional(),
 });
 
 export function parseContentMediaHost(value: unknown): ContentMediaHostInput {
@@ -161,8 +161,8 @@ export function parseContentMediaHost(value: unknown): ContentMediaHostInput {
 
 const beginConnect = z.strictObject({
   platform,
-  clientId: z.string().trim().min(1).max(INPUT_LIMITS.mcpClientId).optional(),
-  clientSecret: z.string().trim().min(1).max(INPUT_LIMITS.mcpClientSecret).optional(),
+  clientId: z.string().trim().min(1).max(INPUT_LIMITS.mcpClientId).exactOptional(),
+  clientSecret: z.string().trim().min(1).max(INPUT_LIMITS.mcpClientSecret).exactOptional(),
 });
 
 export function parseContentBeginConnect(value: unknown): ContentBeginConnectInput {

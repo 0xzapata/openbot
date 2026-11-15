@@ -43,7 +43,7 @@ export interface ContentNetworkChipProps {
   /** The stored error of a failed network: `sourceText` English or provider text. It shows localized. */
   error?: string | null;
   /** Why the network cannot post yet, as `sourceText` English. A triangle shows, and the chip stays a toggle. */
-  warning?: string;
+  warning?: string | undefined;
   /** Skips the network (`false`) or takes it back (`true`). Only a toggle chip calls it. */
   onToggle?: (included: boolean) => void;
   /** The https link that the network returned for the published post. */
@@ -222,9 +222,9 @@ export interface ContentMediaFieldProps {
   /** While busy: the name and size of the file being read, for the status text. */
   reading?: { name: string; bytes: number | null } | null;
   /** Why the last file was refused. The field stays empty. */
-  error?: string;
+  error?: string | undefined;
   /** The post cannot change: no choose, drop or remove. */
-  disabled?: boolean;
+  disabled?: boolean | undefined;
   /** Opens the file dialog of the platform. */
   onChoose: () => void;
   /** Takes the first file of a drop. */
@@ -310,7 +310,7 @@ export function ContentMediaField(props: ContentMediaFieldProps) {
             </span>
             <ImageRemoveButton
               label={t("content.composer.mediaRemove", { name: file().name })}
-              disabled={props.disabled}
+              disabled={props.disabled === true}
               onClick={() => props.onRemove()}
             />
           </div>
