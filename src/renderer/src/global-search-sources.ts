@@ -231,7 +231,7 @@ export function useGlobalSearchSources(open: () => boolean) {
             run: () => openServerSettings(server.id, globalSearchOpener(), "members"),
           },
         );
-        // General shows the row only to an admin of a host that can set it, and only while it is online.
+        // Memory shows the row only to an admin of a host that can set it, and only while it is online.
         if (
           serverCanAdminister(server, "agent-memory-limit-v1") &&
           (server.kind === "local" || server.state === "online")
@@ -242,7 +242,7 @@ export function useGlobalSearchSources(open: () => boolean) {
             detail: server.name,
             group: "settings",
             icon: BookMarked,
-            run: () => openServerSettings(server.id, globalSearchOpener(), "general"),
+            run: () => openServerSettings(server.id, globalSearchOpener(), "memory"),
           });
         }
         if (serverCanAdminister(server, "memory-review-v1") && (server.kind === "local" || server.state === "online")) {
@@ -252,7 +252,7 @@ export function useGlobalSearchSources(open: () => boolean) {
             detail: server.name,
             group: "settings",
             icon: BookMarked,
-            run: () => openServerSettings(server.id, globalSearchOpener(), "general"),
+            run: () => openServerSettings(server.id, globalSearchOpener(), "memory"),
           });
         }
         if (
@@ -265,13 +265,13 @@ export function useGlobalSearchSources(open: () => boolean) {
             detail: server.name,
             group: "settings",
             icon: BookMarked,
-            run: () => openServerSettings(server.id, globalSearchOpener(), "general"),
+            run: () => openServerSettings(server.id, globalSearchOpener(), "memory"),
           });
         }
         if (serverHasAgentDefaults(server)) {
           list.push({
             id: "server:agents",
-            label: t("server.settings.agents"),
+            label: t("server.settings.agentDefaultsTitle"),
             detail: server.name,
             group: "settings",
             icon: Bot,

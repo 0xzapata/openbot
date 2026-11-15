@@ -373,6 +373,11 @@ only to a connection with the capability and never for a hidden agent. Webhook c
 rotation and webhook test runs stay on `events-v1`. A client without the capability shows a notice
 in the Routines view; the web client shows the view switch only when the host serves it.
 
+`routine-flow-stop-v1` adds `POST /v1/routine-flows/runs/stop { routineId, runId }`, which stops a run
+that has not ended and answers `{}`. The member needs manage access to each agent of the routine and
+of the run's steps, and every one of them must be visible. A client without the capability shows no
+Stop.
+
 ### Workflows
 
 `workflows-v1` serves the workflow canvas (see [Workflows](agents.md#workflows)) to a joined desktop,
@@ -682,6 +687,17 @@ The desktop discards the window's session after a send that set cookies, on Canc
 A failed send keeps it, so Done can try again. The web client has no menu item: a web page cannot
 read the cookies of another site.
 
+`browser-sign-in-storage-v1` (protocol 9 only) adds `POST /v1/browser/sign-in/storage` with
+`{ tabId, cookies, storage }` and answers with `{ cookies, storage }`, the counts that the host set.
+Some sites keep the sign-in in the page storage (localStorage), not in a cookie (#8686). `storage` is
+null, or the origin of the window's page and its pairs, at most 1000 pairs and 262,144 characters in
+all. The window reads the page storage in its isolated world when the page is on the tab's host,
+at each check and at Done, and keeps the last copy, so a closed window still sends it. The host sets
+the cookies as `browser-sign-in` does. It writes the pairs only when the tab shows the same origin,
+keeps the other pairs of that origin, and loads the tab again when it set a cookie or a pair. A
+desktop uses this route when the server advertises the capability, and `browser-sign-in` with
+cookies only for an older server. The host never sends the values back or records them.
+
 ### Skill events
 
 `skills-events-v1` adds one optional event, `skills-changed { agentId }`. The host sends it after
@@ -755,7 +771,8 @@ An owner or admin of a joined server manages its host through optional `POST /v1
 Each capability has a frozen codec in `team-protocol/<name>-v1.ts`, registered in
 `team-protocol/optional-routes.ts`, and both transports use it. Every route calls `requireAdmin`,
 except those that also answer a member: `/v1/browser/tab-profiles`, `storage-disk-v1`, `storage-user-files-v1`,
-`storage-channel-v1`, `library-folders-v1`, `agent-fast-mode-v1` and `agent-speed-v1`. The
+`storage-channel-v1`, `library-folders-v1`, `agent-fast-mode-v1`, `agent-speed-v1` and
+`usage-credits-v1`. The
 host advertises a capability only when its `TeamApiAdmin` member exists.
 
 | Capability | Grants | IPC group |
@@ -792,6 +809,7 @@ host advertises a capability only when its `TeamApiAdmin` member exists.
 | `codex-api-key-v1` | No routes. The host logs Codex in with an OpenAI API key sent through the `apiKeySet` route of `providers-v1`, `-v5` or `-v8` | `providerAdmin` |
 | `provider-usage-reset-v1` | Read the usage reset credits of each provider account on the host, and spend one. Only Codex gives credits | `providerAdmin` |
 | `provider-sign-out-v1` | Sign the host's own Claude or Codex sign-in out. The host's other accounts stay | `providerAdmin` |
+| `usage-credits-v1` | Whether each provider account of the host keeps working on credits when a plan window is spent (`/v1/usage-credits/list`). A member gets the provider's own sign-ins; an owner or admin also gets the accounts after them. Only the flag travels, no balance. The event `usage-credits-changed`, with no data, says that a flag changed. Protocol 9 only | `agent` |
 | `host-admin-v1` | Server name and logo | `hostAdmin` |
 | `host-update-v1` | Check for, download and restart into an app update; cancel a restart that waits | `hostAdmin` |
 | `host-timezone-v1` | Read and set the server timezone | `hostAdmin` |

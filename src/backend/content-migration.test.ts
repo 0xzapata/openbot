@@ -20,7 +20,14 @@ afterEach(() => {
   for (const db of databases.splice(0)) db.close();
 });
 
-const CORE_LATEST = 61;
+/** The newest core version of this build: read from a fresh database, so an upstream merge needs no change here. */
+const CORE_LATEST = (() => {
+  const db = new DatabaseSync(":memory:");
+  migrateOpenBotDatabase(db);
+  const version = Number(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()?.version);
+  db.close();
+  return version;
+})();
 const CONTENT_OBJECTS = [
   { type: "table", name: "content_accounts" },
   { type: "table", name: "content_posts" },
@@ -43,15 +50,20 @@ function coreAt(version: number): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   databases.push(db);
   db.exec("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)");
+  migrateCoreTo(db, version);
+  return db;
+}
+
+/** Runs the core steps up to `version` and stops there. */
+function migrateCoreTo(db: DatabaseSync, version: number): void {
   if (version >= CORE_LATEST) {
     migrateOpenBotDatabase(db);
-    return db;
+    return;
   }
   db.exec(`CREATE TEMP TRIGGER stop_at_version BEFORE INSERT ON schema_migrations WHEN new.version > ${version}
     BEGIN SELECT RAISE(ABORT, 'fixture stop'); END;`);
   expect(() => migrateOpenBotDatabase(db)).toThrow(`migration to version ${version + 1} failed`);
   db.exec("DROP TRIGGER stop_at_version");
-  return db;
 }
 
 /** Rows in tables of core schema 59: an event, a memory, a Slack connection and a ping. */
@@ -104,7 +116,8 @@ function seedContent(db: DatabaseSync): void {
 function forkDatabase(forkVersions: readonly number[], withLink: boolean): DatabaseSync {
   const db = coreAt(59);
   seed(db);
-  if (forkVersions.includes(62)) migrateOpenBotDatabase(db);
+  // The 0.69 fork build ran upstream's 60 and 61 only; upstream's own 62 came later.
+  if (forkVersions.includes(62)) migrateCoreTo(db, 61);
   db.exec(CONTENT_SCHEMA_SQL);
   if (withLink) db.exec("ALTER TABLE content_variants ADD COLUMN external_url TEXT");
   const insert = db.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, 'fork')");
@@ -154,9 +167,9 @@ function expectHealthy(db: DatabaseSync): void {
   expect(versions(db, "content_schema_migrations")).toEqual([1, 2]);
   expect(columns(db, "projection_agent_memories")).toContain("site");
   expect(columns(db, "content_variants")).toContain("external_url");
-  expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'projection_pinned_thread_messages'").all()).toEqual([
-    { name: "projection_pinned_thread_messages" },
-  ]);
+  // Upstream's 61 and 62 ran, also on an adopted fork database.
+  for (const name of ["projection_pinned_thread_messages", "projection_messaging_history"])
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE name = ?").all(name)).toEqual([{ name }]);
   expect(db.prepare("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
   expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
   expect(db.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
@@ -182,20 +195,23 @@ describe("content migrations", () => {
     expectHealthy(db);
   });
 
-  it.each([59, 60, 61])("keeps every row from released core schema %i and adds the empty content tables", (version) => {
-    const db = coreAt(version);
-    seed(db);
-    const before = contents(db);
-    start(db);
-    const after = contents(db);
-    for (const table of ["content_accounts", "content_posts", "content_variants"]) expect(after[table]).toEqual([]);
-    // Each table that existed keeps its rows; core 60 gives each memory a null site.
-    for (const [table, rows] of Object.entries(before))
-      expect(after[table]).toEqual(
-        table === "projection_agent_memories" && version < 60 ? withNullColumn(rows, "site") : rows,
-      );
-    expectHealthy(db);
-  });
+  it.each([59, 60, 61, 62])(
+    "keeps every row from released core schema %i and adds the empty content tables",
+    (version) => {
+      const db = coreAt(version);
+      seed(db);
+      const before = contents(db);
+      start(db);
+      const after = contents(db);
+      for (const table of ["content_accounts", "content_posts", "content_variants"]) expect(after[table]).toEqual([]);
+      // Each table that existed keeps its rows; core 60 gives each memory a null site.
+      for (const [table, rows] of Object.entries(before))
+        expect(after[table]).toEqual(
+          table === "projection_agent_memories" && version < 60 ? withNullColumn(rows, "site") : rows,
+        );
+      expectHealthy(db);
+    },
+  );
 
   it.each([
     ["the pre-merge fork (content at core 60 and 61)", [60, 61], true],
@@ -220,16 +236,16 @@ describe("content migrations", () => {
   });
 
   it("leaves a later official release alone: no content tables, so no adoption", () => {
-    const db = coreAt(61);
-    db.exec("INSERT INTO schema_migrations VALUES (62, 'official')");
+    const db = coreAt(CORE_LATEST);
+    db.prepare("INSERT INTO schema_migrations VALUES (?, 'official')").run(CORE_LATEST + 1);
     adoptForkContentSchema(db);
-    expect(versions(db, "schema_migrations").at(-1)).toBe(62);
-    // This build knows core 61, so the core refusal of a newer database still applies.
+    expect(versions(db, "schema_migrations").at(-1)).toBe(CORE_LATEST + 1);
+    // This build does not know the next core version, so the core refusal of a newer database still applies.
     expect(() => migrateOpenBotDatabase(db)).toThrow("newer than this application supports");
   });
 
   it("rolls back a failed content step and its marker, then retries", () => {
-    const db = coreAt(61);
+    const db = coreAt(CORE_LATEST);
     db.exec("CREATE TABLE content_schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)");
     db.exec(`CREATE TEMP TRIGGER fail_marker BEFORE INSERT ON content_schema_migrations WHEN new.version = 2
       BEGIN SELECT RAISE(ABORT, 'late failure'); END;`);
@@ -244,7 +260,7 @@ describe("content migrations", () => {
   });
 
   it("refuses a newer or incomplete content history with a plain error, and changes nothing", () => {
-    const db = coreAt(61);
+    const db = coreAt(CORE_LATEST);
     start(db);
     db.exec("INSERT INTO content_schema_migrations VALUES (3, 'newer')");
     const before = contents(db);
@@ -264,7 +280,7 @@ describe("content migrations", () => {
   });
 
   it("deletes variants with their post, unbinds them from a deleted account, and keeps one per platform", () => {
-    const db = coreAt(61);
+    const db = coreAt(CORE_LATEST);
     start(db);
     seedContent(db);
     const insertVariant = (variantId: string, postId: string) =>

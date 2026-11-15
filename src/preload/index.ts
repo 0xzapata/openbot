@@ -272,6 +272,7 @@ import {
   decodeConversationPageFromMain,
   decodeConversationSearchPageFromMain,
   decodeFilePreview,
+  decodePendingApproval,
   decodePinnedMessages,
   decodeQueue,
   decodeReadState,
@@ -698,6 +699,7 @@ const agentGroup = bridgeGroup(IPC_ENDPOINTS.agent, {
   compactTaskContext: decodeVoid,
   respondToPrompt: decodeVoid,
   respondToApproval: decodeVoid,
+  readPendingApproval: decodePendingApproval,
   respondToBrowserSecret: decodeVoid,
   respondToBrowserTakeover: decodeVoid,
   scopedEvent: decodeScopedAgentEvent,
@@ -824,6 +826,7 @@ const openbotApi: OpenBotDesktopApi = {
     startProviderCodeLogin: decodeProviderCodeLoginStart,
     cancelProviderCodeLogin: decodeAgentStatusFromMain,
     connectProviderAccount: decodeAgentStatusFromMain,
+    connectProviderAccountKey: decodeAgentStatusFromMain,
     cancelProviderAccountSignIn: decodeAgentStatusFromMain,
     renameProviderAccount: decodeAgentStatusFromMain,
     removeProviderAccount: decodeAgentStatusFromMain,
@@ -903,6 +906,7 @@ const openbotApi: OpenBotDesktopApi = {
     connect: decodeRoutineFlowLink,
     disconnect: decodeVoid,
     updateLink: decodeRoutineFlowLink,
+    stopRun: decodeVoid,
   }),
   workflows: bridgeGroup(IPC_ENDPOINTS.workflows, {
     list: decodeWorkflowSummaries,
@@ -1130,6 +1134,7 @@ const openbotApi: OpenBotDesktopApi = {
   billing: bridgeGroup(IPC_ENDPOINTS.billing, {
     getState: decodeBillingState,
     openPortal: decodeVoid,
+    buyStorage: decodeBillingState,
   }),
   license: bridgeGroup(IPC_ENDPOINTS.license, {
     getState: decodeLicenseState,
@@ -1194,6 +1199,7 @@ const openbotApi: OpenBotDesktopApi = {
     startAccountSignIn: decodeVoid,
     accountSignInStatus: decodeProviderHostSignInStatus,
     cancelAccountSignIn: decodeVoid,
+    connectAccountKey: decodeVoid,
     renameAccount: decodeVoid,
     removeAccount: decodeVoid,
     setAccountPool: decodeVoid,
