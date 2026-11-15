@@ -40,7 +40,7 @@ import {
  * one before this one ends.
  */
 export const META_GRAPH_VERSION = "v24.0";
-export const THREADS_API_VERSION = "v1.0";
+const THREADS_API_VERSION = "v1.0";
 
 /** Instagram and Threads tokens last 60 days; a publish in the last week renews the token. */
 const LONG_LIVED_REFRESH_MARGIN_MS = 7 * 24 * 60 * 60_000;

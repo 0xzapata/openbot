@@ -52,10 +52,10 @@ export function contentHostedKey(mimeType: string): string | null {
   return extension ? `t/${randomBytes(16).toString("hex")}.${extension}` : null;
 }
 
-export const CONTENT_MEDIA_HOST_PROBE_FAILURES = ["upload", "public", "bytes", "delete"] as const;
+const CONTENT_MEDIA_HOST_PROBE_FAILURES = ["upload", "public", "bytes", "delete"] as const;
 
 /** The save-time check failed. `message` tells the user what to change. */
-export class ContentMediaHostError extends Schema.TaggedError<ContentMediaHostError>()("ContentMediaHostError", {
+class ContentMediaHostError extends Schema.TaggedError<ContentMediaHostError>()("ContentMediaHostError", {
   reason: Schema.Literals(CONTENT_MEDIA_HOST_PROBE_FAILURES),
   message: Schema.String,
 }) {}
