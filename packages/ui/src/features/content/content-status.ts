@@ -208,12 +208,18 @@ export function queueSections<T extends ContentPostView>(
 }
 
 /** Why a network cannot be chosen in the composer. Null: it can. */
-export type ContentNetworkBlock = "unavailable" | "notConnected" | "needsHost" | "needsVideo" | "imagesOnly" | null;
+export type ContentNetworkBlock = "unavailable" | "needsVideo" | "imagesOnly" | null;
+/**
+ * The setup that a network still needs before it can post. It does not block: a post can be written and
+ * scheduled first, and the network fails at its time until the setup is done (decision B).
+ */
+export type ContentNetworkSetup = "notConnected" | "needsHost" | null;
 /** What stops a chosen network. The first one is the footer reason. */
 export type ContentNetworkIssue = "overLimit" | "needsImage" | "noTitle";
 
 export interface ContentNetworkRow {
   block: ContentNetworkBlock;
+  setup: ContentNetworkSetup;
   /** Only for a chosen network that is not blocked. */
   issues: ContentNetworkIssue[];
   /** The length of the text as the network counts it, and its limit. */
@@ -234,17 +240,22 @@ export function networkRow(input: {
 }): ContentNetworkRow {
   const rules = CONTENT_PLATFORMS[input.network.platform];
   const length = contentTextLength(input.network.platform, input.text);
+  const account = input.network.account;
+  // Connect already collects the host, so a network that is not connected says that first.
+  const setup: ContentNetworkSetup =
+    !account || account.status === "revoked"
+      ? "notConnected"
+      : input.network.platform === "instagram" && !input.hostConfigured
+        ? "needsHost"
+        : null;
   const row = (block: ContentNetworkBlock, issues: ContentNetworkIssue[] = []): ContentNetworkRow => ({
     block,
+    setup: block === "unavailable" ? null : setup,
     issues,
     length,
     limit: rules.textLimit,
   });
   if (!input.network.available) return row("unavailable");
-  const account = input.network.account;
-  if (!account || account.status === "revoked") return row("notConnected");
-  // Connect already collects the host, so a network that is not connected says that first.
-  if (input.network.platform === "instagram" && !input.hostConfigured) return row("needsHost");
   if (input.media !== null && input.media !== rules.media)
     return row(rules.media === "video" ? "needsVideo" : "imagesOnly");
   // A video network with no video cannot be chosen; an image network with no image can, and blocks (Instagram).

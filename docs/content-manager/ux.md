@@ -168,7 +168,8 @@ Network row rules:
 
 | Condition | Row shows | Checkbox |
 | --- | --- | --- |
-| not connected | "Not connected", Connect button (opens D1) | disabled |
+| not connected | "Not connected", Connect button (opens D1) | enabled; setup is optional, so the post can be saved or scheduled first. Only Publish now is blocked ("Set up {network} first, or schedule the post for later."), and at its time the network fails until it is connected (decision B) |
+| Instagram, no image host | "Needs an image host", Set up image host button (opens D1) | enabled; same as not connected |
 | gated (Meta review, Google verification) | "Not available yet", gate reason | disabled |
 | image attached, network is YouTube | "Needs a video" | disabled |
 | video attached, network takes images only | "Takes images, not video" | disabled |
@@ -253,8 +254,7 @@ feature's CSS from another feature.
 
 | Screen | Empty | Loading | Error |
 | --- | --- | --- | --- |
-| S1 Queue, no account | `ContentEmpty`: `content.empty.noAccounts.*`, action Connect accounts (D1) | Skeleton: 3 rows per section, 2 sections | `Alert` danger `content.error.loadFailed`, Retry |
-| S1 Queue, no post | `ContentEmpty`: `content.empty.*`, action New post | same | same |
+| S1 Queue, no post (with or without an account; Accounts stays in the header) | `ContentEmpty`: `content.empty.*`, action New post | Skeleton: 3 rows per section, 2 sections | `Alert` danger `content.error.loadFailed`, Retry |
 | S1 Queue, section empty | section is hidden | none | none |
 | S1 Queue, account signed out | not empty: banner B1 on top, rows for that account show failed at publish time | none | none |
 | S2 Calendar | no post with a time: `content.calendar.empty` with New post; week grid stays | Skeleton cells, as `RoutineCalendar.tsx:339-358` | `Alert` danger `content.calendar.loadFailed`, Retry |
@@ -399,9 +399,6 @@ Reused, not new: `common.back`, `common.cancel`, `common.edit`, `common.delete`,
 // Empty states
 "content.empty.title": "No posts yet",
 "content.empty.body": "Write a post, or ask an agent to draft one. You approve each post before it goes out.",
-"content.empty.noAccounts.title": "Connect a network first",
-"content.empty.noAccounts.body": "OpenBot posts with your own accounts. Sign-in stays on this computer.",
-"content.empty.noAccounts.action": "Connect accounts",
 
 // Calendar
 "content.calendar.loading": "Loading the calendar",
@@ -456,6 +453,7 @@ Reused, not new: `common.back`, `common.cancel`, `common.edit`, `common.delete`,
 "content.composer.blocked.needsImage": "Add an image for Instagram, or turn Instagram off.",
 "content.composer.blocked.noTitle": "Add a title for YouTube.",
 "content.composer.blocked.pastTime": "Pick a time in the future.",
+"content.composer.blocked.needsSetup": "Set up {network} first, or schedule the post for later.",
 
 // Gates (composer and accounts)
 "content.gate.meta": "Waits for Meta app review",

@@ -130,23 +130,25 @@ function needsHost(content: ContentState, post: ContentPostView): boolean {
   );
 }
 
-/** The networks of `platforms` that can post this post now: available, connected, and the right file. */
-function postable(content: ContentState, post: ContentPostView, platforms: readonly ContentPlatform[]) {
+/**
+ * The networks of `platforms` that can take this post: available and the right file. `setUp` also needs the
+ * setup done (connected, and Instagram with its image host), so the network can post it now.
+ */
+function postable(content: ContentState, post: ContentPostView, platforms: readonly ContentPlatform[], setUp: boolean) {
   const networks = content.state.accounts?.networks ?? [];
   return platforms.filter((platform) => {
     const network = networks.find((candidate) => candidate.platform === platform);
     const variant = post.variants.find((candidate) => candidate.platform === platform);
-    return (
-      network !== undefined &&
-      networkRow({
-        network,
-        hostConfigured: hostConfigured(content),
-        chosen: true,
-        text: variant?.body ?? post.body,
-        title: variant?.title ?? "",
-        media: post.media?.kind ?? null,
-      }).block === null
-    );
+    if (network === undefined) return false;
+    const row = networkRow({
+      network,
+      hostConfigured: hostConfigured(content),
+      chosen: true,
+      text: variant?.body ?? post.body,
+      title: variant?.title ?? "",
+      media: post.media?.kind ?? null,
+    });
+    return row.block === null && (!setUp || row.setup === null);
   });
 }
 
@@ -156,6 +158,7 @@ const publishCount = (content: ContentState, post: ContentPostView) =>
     content,
     post,
     post.variants.filter((variant) => variant.status !== "skipped").map((variant) => variant.platform),
+    true,
   ).length;
 
 /** The approval queue: what needs the user first, then each day, then drafts, then what is done. */
@@ -227,13 +230,6 @@ export function ContentQueue(props: ContentQueueProps) {
 
   /** The accounts are not known: no empty state may claim there is no post or no account. */
   const accountsUnknown = () => content().state.accounts === null;
-
-  /** No connected or signed-out account. A revoked account counts as no account. */
-  const noAccounts = () =>
-    content().state.accounts !== null &&
-    content().state.accounts?.networks.every(
-      (network) => network.account === null || network.account.status === "revoked",
-    ) === true;
 
   /**
    * Runs one write of a post. A click on a row whose write still runs does nothing. A failure shows as a
@@ -336,7 +332,7 @@ export function ContentQueue(props: ContentQueueProps) {
       duration: TOAST_DURATION,
       action: {
         label: t("content.toast.undo"),
-        onClick: () => void restore(post, postable(content(), post, skipped), wasQueued),
+        onClick: () => void restore(post, postable(content(), post, skipped, false), wasQueued),
       },
     });
   }
@@ -355,12 +351,13 @@ export function ContentQueue(props: ContentQueueProps) {
       await write(post.id, () => api().schedulePost({ postId: post.id, scheduledFor: time }));
   }
 
-  /** The Restore of a skipped post brings back only the networks that can post it. */
+  /** The Restore of a skipped post brings back the networks that can take it, also those not set up yet. */
   const restorable = (post: ContentPostView) =>
     postable(
       content(),
       post,
       post.variants.map((variant) => variant.platform),
+      false,
     );
 
   function toggleNetwork(post: ContentPostView, variant: ContentVariantView, included: boolean) {
@@ -572,26 +569,15 @@ export function ContentQueue(props: ContentQueueProps) {
         </Match>
         {/* G7: with no accounts known, the load Alert above stands alone. */}
         <Match when={content().state.posts.length === 0 && accountsUnknown()}>{null}</Match>
+        {/* Network setup is optional: an empty queue starts a post, and Accounts stays in the header. */}
         <Match when={content().state.posts.length === 0}>
-          <Show
-            when={noAccounts()}
-            fallback={
-              <ContentEmpty
-                title={t("content.empty.title")}
-                body={t("content.empty.body")}
-                action={t("content.action.new")}
-                icon={<Plus aria-hidden="true" />}
-                onAction={() => content().openComposer(null)}
-              />
-            }
-          >
-            <ContentEmpty
-              title={t("content.empty.noAccounts.title")}
-              body={t("content.empty.noAccounts.body")}
-              action={t("content.empty.noAccounts.action")}
-              onAction={() => content().openAccounts()}
-            />
-          </Show>
+          <ContentEmpty
+            title={t("content.empty.title")}
+            body={t("content.empty.body")}
+            action={t("content.action.new")}
+            icon={<Plus aria-hidden="true" />}
+            onAction={() => content().openComposer(null)}
+          />
         </Match>
         <Match when={true}>
           <Show when={content().state.phase === "error"}>
