@@ -4,6 +4,7 @@ import { chmod, copyFile, mkdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Effect, Result } from "effect";
+import { adoptForkContentSchema, migrateContentSchema } from "../content/content-migrations";
 import { migrateOpenBotDatabase } from "../openbot-database-schema";
 import { storedIO, storedSync } from "../stored-state-effects";
 import { databaseRow, errorCode, requiredNumberColumn, requiredStringColumn } from "./database-rows";
@@ -211,7 +212,10 @@ export class DatabaseCore {
   }
 
   #migrate(closedCleanly: boolean): void {
+    // Fork: the content tables have their own migration record, so the core record stays upstream's.
+    adoptForkContentSchema(this.connection);
     migrateOpenBotDatabase(this.connection, { closedCleanly });
+    migrateContentSchema(this.connection);
   }
 }
 

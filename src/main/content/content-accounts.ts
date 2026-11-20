@@ -50,7 +50,7 @@ export const CONTENT_MEDIA_HOST_FILE = "openbot-content-media-host-v1.json";
 
 const CONNECT_DEADLINE_MS = 5 * 60_000;
 /** The longest time of one image host check: the put, the public read and the removal. */
-export const CONTENT_MEDIA_HOST_CHECK_MS = 60_000;
+const CONTENT_MEDIA_HOST_CHECK_MS = 60_000;
 /** A token that ends in less than this is refreshed before a publish. */
 export const CONTENT_REFRESH_MARGIN_MS = 60_000;
 

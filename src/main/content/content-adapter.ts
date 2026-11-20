@@ -14,7 +14,7 @@ import { sourceText } from "@openbot/i18n/source";
 import { redactText } from "@openbot/logging";
 import { Effect, Schema } from "effect";
 
-export interface ContentOAuthStart {
+interface ContentOAuthStart {
   url: string;
   state: string;
   codeVerifier: string;
@@ -27,7 +27,7 @@ export interface ContentTokens {
   scopes: string;
 }
 
-export interface ContentProfile {
+interface ContentProfile {
   externalAccountId: string;
   handle: string;
   displayName: string | null;
@@ -59,7 +59,7 @@ export function imageOnly(
   return Effect.succeed(media);
 }
 
-export const CONTENT_ADAPTER_ERROR_CODES = [
+const CONTENT_ADAPTER_ERROR_CODES = [
   "signed-out",
   "rate-limited",
   "rejected",
@@ -123,7 +123,7 @@ export interface ContentAdapterOptions {
   sleep: (ms: number) => Promise<void>;
 }
 
-export const CONTENT_REQUEST_TIMEOUT_MS = 30_000;
+const CONTENT_REQUEST_TIMEOUT_MS = 30_000;
 /** A network that still processes a post after this time has failed: Meta containers expire after 24 h. */
 export const CONTENT_PENDING_LIMIT_MS = 24 * 60 * 60_000;
 export const CONTENT_UPLOAD_TIMEOUT_MS = 120_000;

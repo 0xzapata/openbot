@@ -94,7 +94,7 @@ function refusalText(refusal: ContentMediaRefusal): string {
   }
 }
 
-export function contentMediaView(media: ContentMedia | null): ContentMediaView | null {
+function contentMediaView(media: ContentMedia | null): ContentMediaView | null {
   if (!media) return null;
   return { id: media.id, kind: media.kind, mimeType: media.mimeType, bytes: media.bytes, name: media.name };
 }

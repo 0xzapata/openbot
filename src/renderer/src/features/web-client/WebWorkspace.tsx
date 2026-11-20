@@ -82,6 +82,7 @@ import { MCP_SIGN_IN_CAPABILITY } from "@openbot/contracts/team-protocol/mcp-sig
 import { MESSAGE_DELETE_CAPABILITY } from "@openbot/contracts/team-protocol/message-delete-v1";
 import { MESSAGE_PINS_CAPABILITY } from "@openbot/contracts/team-protocol/message-pins-v1";
 import { PROVIDER_ACCOUNTS_CAPABILITY } from "@openbot/contracts/team-protocol/provider-accounts-v1";
+import { ROUTINE_FLOW_STOP_CAPABILITY } from "@openbot/contracts/team-protocol/routine-flow-stop-v1";
 import { ROUTINE_FLOWS_CAPABILITY } from "@openbot/contracts/team-protocol/routine-flows-v1";
 import { ROUTINE_RECOVERY_CAPABILITY } from "@openbot/contracts/team-protocol/routine-recovery-v1";
 import { ROUTINE_RUN_PLACE_CAPABILITY } from "@openbot/contracts/team-protocol/routine-run-place-v1";
@@ -632,6 +633,9 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
       const incompatibility =
         active && workspace.state.incompatibility?.hostId === host.hostId ? workspace.state.incompatibility : null;
       const notice = notifications.state(host.hostId);
+      // The connected host has the look from its own event; the list has the account server's copy.
+      const connected = active ? workspace.state.host : null;
+      const appearance = connected?.appearance !== undefined ? connected.appearance : host.appearance;
       return {
         id: host.hostId,
         name: host.name,
@@ -651,6 +655,7 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
         notificationsMutedUntil: notice.mutedUntil,
         notificationLevel: notice.level,
         remoteDesktopAvailable: false,
+        ...(appearance === undefined ? {} : { appearance }),
         ...(host.memberLimit === undefined ? {} : { memberLimit: host.memberLimit }),
         ...(host.hosted === undefined ? {} : { hosted: host.hosted }),
         ...(host.restartAvailable === undefined ? {} : { restartAvailable: host.restartAvailable }),
@@ -1201,6 +1206,7 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
     admin: () => workspace.runtime.admin,
     presence: () => workspace.state.presence,
     refreshHosts: () => workspace.refreshHosts(),
+    setAppearance: (hostId, appearance) => workspace.setHostAppearance(hostId, appearance),
     relaySupported: () => workspace.state.capabilities.includes(SIGN_IN_RELAY_CAPABILITY),
   });
   /** Only the owner of a host with `host-key-rotation-v1` changes its key. A named function, not a ternary prop. */
@@ -2075,8 +2081,11 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
       },
     ];
   });
-  const routineFlowsHost = webRoutineFlowsHost(workspace.runtime, workspace.onHostEvent, () =>
-    eventsEnabled() ? webhookRoutines : undefined,
+  const routineFlowsHost = webRoutineFlowsHost(
+    workspace.runtime,
+    workspace.onHostEvent,
+    () => (eventsEnabled() ? webhookRoutines : undefined),
+    () => workspace.state.capabilities.includes(ROUTINE_FLOW_STOP_CAPABILITY),
   );
   /** The host's Providers settings, which an owner or admin of the host can open. */
   const openProviderSettings = (trigger: HTMLElement) => {
@@ -3412,6 +3421,7 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
                         loadError={serverSettings.state.error}
                         onRetry={serverSettings.refresh}
                         onSaveIdentity={serverSettings.saveIdentity}
+                        onSaveAppearance={serverSettings.saveAppearance}
                         // Publication and screen recording belong to the computer that runs the server.
                         onSetPublished={unavailable}
                         onRotateHostKey={rotateHostKeyAction()}
@@ -3728,6 +3738,7 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
                       },
                       approvals: () => workspace.state.approvals,
                       takeovers: () => workspace.state.takeovers,
+                      prompts: () => workspace.state.prompts,
                       pausedAgentIds,
                     });
                     return (
@@ -3780,6 +3791,9 @@ function WebWorkspaceFrame(props: WebWorkspaceProps) {
                         promptUiBlock={channelView.promptUiBlock()}
                         approval={channelView.approval()}
                         browserTakeover={channelView.browserTakeover()}
+                        // A member's Sign in card signs in as the agent chat's does (#6228).
+                        onOpenMcpSignIn={openMcpSignInFromChat()}
+                        mcpSignedIn={(mcpServerId) => serverSettings.state.mcpSignIns[mcpServerId]?.signedIn === true}
                         onSelectAgent={(id) => {
                           setMobilePane("conversation");
                           void select(id);

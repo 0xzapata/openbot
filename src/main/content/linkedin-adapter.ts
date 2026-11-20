@@ -30,7 +30,7 @@ const TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken";
 const USERINFO_URL = "https://api.linkedin.com/v2/userinfo";
 const IMAGES_URL = "https://api.linkedin.com/rest/images";
 const POSTS_URL = "https://api.linkedin.com/rest/posts";
-export const LINKEDIN_SCOPES = "openid profile w_member_social";
+const LINKEDIN_SCOPES = "openid profile w_member_social";
 const NETWORK = "LinkedIn";
 
 /**

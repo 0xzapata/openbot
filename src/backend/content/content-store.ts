@@ -41,7 +41,7 @@ export const CONTENT_NETWORK_NAMES: { readonly [platform in ContentPlatform]: st
   youtube: "YouTube",
 };
 
-export const CONTENT_ACCOUNT_STATUSES = ["connected", "expired", "revoked"] as const;
+const CONTENT_ACCOUNT_STATUSES = ["connected", "expired", "revoked"] as const;
 export type ContentAccountStatus = (typeof CONTENT_ACCOUNT_STATUSES)[number];
 
 /** One row of `content_accounts`. The two token columns hold ciphertext only, never a token. */
@@ -96,7 +96,7 @@ export interface ContentPostInput {
 }
 
 /** The own values of one variant that an edit changes. An absent field stays as it is. */
-export interface ContentVariantEdit {
+interface ContentVariantEdit {
   platform: ContentPlatform;
   body?: string | null;
   title?: string | null;

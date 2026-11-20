@@ -1,4 +1,4 @@
-// Shared by migration v60 and the separate new-database schema. IF NOT EXISTS throughout.
+// Content migration 1 (`content-migrations.ts`) runs it on every database, new or old. IF NOT EXISTS throughout.
 //
 // The content manager: connected social accounts, posts, and one variant of each post for each
 // platform. A variant is keyed by platform, not by account, because an agent writes it before an

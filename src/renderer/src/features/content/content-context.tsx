@@ -16,7 +16,7 @@ export type ContentPane = "queue" | "calendar";
  * so a post that is not in the loaded page still shows. `session` keys the form: it changes only when the
  * composer opens, not when a new post gets its id.
  */
-export interface ContentComposerTarget {
+interface ContentComposerTarget {
   postId: string | null;
   post: ContentPostView | null;
   session: number;
@@ -27,7 +27,7 @@ export interface ContentComposerTarget {
 }
 
 /** The file of the post: the one it has, or a new attachment draft. */
-export interface ComposerMedia extends ContentMediaFieldFile {
+interface ComposerMedia extends ContentMediaFieldFile {
   draftId: string | null;
 }
 

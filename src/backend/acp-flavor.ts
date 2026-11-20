@@ -1,11 +1,17 @@
 import { win32 } from "node:path";
-import type { LoadSessionResponse, NewSessionRequest, PromptResponse, RequestError } from "@agentclientprotocol/sdk";
+import {
+  type LoadSessionResponse,
+  type NewSessionRequest,
+  type PromptResponse,
+  RequestError,
+} from "@agentclientprotocol/sdk";
 import type { DynamicRecord } from "@openbot/contracts/runtime-values";
 import { sourceText } from "@openbot/i18n/source";
 import type { CauseCode } from "@openbot/telemetry";
 import type { GeneratedMediaKind } from "./agent/image-generation";
 import { enableCursorMcpServers } from "./cursor-mcp-disabled";
 import { grokMediaItem, grokMediaKind, grokMediaToolKind } from "./grok-media";
+import { grokMcpServerName } from "./mcp-provider-shapes";
 import { isRecord, type ThreadItem } from "./protocol";
 
 /** The custom endpoint that serves a model, as a turn's error names it. Never a credential itself. */
@@ -96,9 +102,14 @@ export interface AcpFlavor {
   emptyAnswerError?: RegExp;
   /**
    * What to do when `session/load` or `session/resume` fails: wait once for a process that still
-   * starts, or list the sessions to find out whether this one exists. `null` reports the failure.
+   * starts, or list the sessions to find out whether this one exists. `list-sessions` tries a listed
+   * session once more; `confirm-missing` reports the failure of a listed session as it is. `null`
+   * reports the failure.
    */
-  restoreFailure?(error: unknown, method: "load" | "resume"): "wait-for-start" | "list-sessions" | null;
+  restoreFailure?(
+    error: unknown,
+    method: "load" | "resume",
+  ): "wait-for-start" | "list-sessions" | "confirm-missing" | null;
   /**
    * A turn that the agent lost, after which it refuses each request of the session until the turn is
    * discarded. `refusal` matches the text of that refusal, and `unsent` the refusal of a prompt that
@@ -106,6 +117,13 @@ export interface AcpFlavor {
    * lost turns of a session. OpenBot never sends a prompt again that the agent took.
    */
   lostTurns?: { refusal: RegExp; unsent: RegExp; discard(sessionId: string): readonly string[] };
+  /**
+   * Whether a failed prompt is a refusal after which the agent's process can refuse each prompt
+   * until it ends. OpenBot then ends a process that answered a prompt before, when no other turn
+   * runs on it, so the next message starts a new process. A process that refuses from its first
+   * prompt is not ended again.
+   */
+  refusesUntilRestart?(error: unknown): boolean;
   /** A failed model refresh keeps the last list that the agent gave. */
   keepModelsOnRefreshFailure?: true;
   /**
@@ -113,6 +131,11 @@ export interface AcpFlavor {
    * to it. A set of the model the process already runs on is not sent again.
    */
   processWideModel?: true;
+  /**
+   * A model or effort that the session already has is not sent again before a turn. Each set makes
+   * the agent do slow work of its own, and a set that does not answer in time fails the turn.
+   */
+  setsConfigOnlyOnChange?: true;
   /**
    * A `session/set_model` failure after which the session already runs on the new model. The agent
    * changes the session first and then fails to save the model as its default.
@@ -156,7 +179,8 @@ export interface AcpFlavor {
     mcpLoadFailure(text: string): { name: string; reason: string } | null;
     /**
      * The MCP tools whose parameter schema the agent refused in the session's last prompt, from the
-     * agent's own log, for a failure text that names no cause. Each name is `mcp_<server>_<tool>`.
+     * failure text, or from the agent's own log when the text names no cause. Each name is
+     * `mcp_<server>_<tool>`.
      */
     refusedMcpTools?(text: string, argv: readonly string[], sessionId: string): string[];
     /** A failure text after which the agent no longer has the session, so the next prompt opens it again. */
@@ -164,6 +188,12 @@ export interface AcpFlavor {
   };
   /** A stop finishes the turn locally, and the next prompt opens the session again first. */
   cancelLocallyThenResume?: true;
+  /**
+   * The CLI version from which a second `session/prompt` during a running turn joins that turn. The
+   * CLI answers the first prompt with `end_turn` at once, and the work goes on under the new prompt.
+   * Without it, ACP has no steer request, and a second prompt can cancel the running turn.
+   */
+  steerByPromptSince?: string;
   /** A turn that does not complete marks its open tool calls as stopped. */
   interruptToolsOnStop?: true;
   /** Answer text is shown at once, not only when `session/prompt` answers. */
@@ -186,6 +216,14 @@ export interface AcpFlavor {
    * shell command that runs in the background.
    */
   unsentBackgroundTurns?: true;
+  /**
+   * The agent can end a prompt with `end_turn` while a command (`execute` tool call) that it moved to
+   * the background still runs, and then wakes its model by itself when the command ends. With no
+   * prompt open, it sends no update and no permission request for that work. OpenBot keeps the turn
+   * open, and when `session/list` shows that the session changed, a second prompt connects the work
+   * again. A command with `rawInput.IsDaemon` runs on by intent and does not keep the turn open.
+   */
+  wakesAfterPromptEnds?: true;
   /** Each answer message has its own `messageId`, so text of a new ID is a new message, not more text. */
   messagePerId?: true;
   /**
@@ -218,7 +256,8 @@ export interface AcpFlavor {
   mcpServersLoadWithSession?: true;
   /**
    * The agent drops a stdio MCP server of `session/new` and `session/load` with no error, although
-   * ACP requires stdio. OpenBot starts each one itself (`startStdioMcpRelay`) and sends it as http.
+   * ACP requires stdio, or keeps it running after the session closes. OpenBot starts each one itself
+   * (`startStdioMcpRelay`), sends it as http, and stops it when the session closes.
    */
   relayStdioMcpServers?: true;
   /**
@@ -227,6 +266,11 @@ export interface AcpFlavor {
    */
   mcpServerFailure?(method: string, params: DynamicRecord): AcpMcpServerFailure | null;
   /**
+   * The agent's own rule for an MCP server name, applied after `providerMcpServerName`. The agent
+   * skips each tool of a server whose name breaks the rule, with no error.
+   */
+  mcpServerName?(name: string): string;
+  /**
    * The MCP server names in the agent's own files for `cwd`. The agent starts its own entry in place
    * of a session server with the same name, so that server travels as `openbot_<name>`. `argv` is
    * the command line of the agent's process, which can name the folder of those files.
@@ -234,6 +278,12 @@ export interface AcpFlavor {
   ownMcpServerNames?(cwd: string, argv: readonly string[]): readonly string[];
   /** Turns OpenBot's servers back on where the agent's own settings for `cwd` turned them off. */
   enableMcpServers?(cwd: string, names: readonly string[]): void;
+  /**
+   * The agent keeps the tools that a session has at its first turn. A server that the agent gets
+   * later, such as on `session/load` or `session/resume` after the user added it, reaches the model
+   * only as a note, and the model cannot call its tools. A changed MCP set must start a new session.
+   */
+  mcpToolsFixedAtStart?: true;
   /** OpenBot compacts by replacing the session, for an agent that reports `usage_update` and has no compact request. */
   contextCompaction?: "handoff";
   /**
@@ -300,7 +350,22 @@ export const CLINE_ACP_FLAVOR: AcpFlavor = { subagentTools: ["spawn_agent"] };
  * GitHub Copilot CLI 1.0.105 advertises only http and sse MCP servers, and drops a stdio one, so its
  * agents had no Computer Use and no stdio server of the user (github/copilot-cli#3889).
  */
-export const COPILOT_ACP_FLAVOR: AcpFlavor = { relayStdioMcpServers: true };
+export const COPILOT_ACP_FLAVOR: AcpFlavor = {
+  relayStdioMcpServers: true,
+  turnFailure: copilotTurnFailure,
+};
+
+/**
+ * GitHub Copilot CLI 1.0.105 writes the model request. For some models it sends
+ * `thinking.type.enabled`, which GitHub's service refuses with a 400, and each turn on that model
+ * fails. The chat showed "Execution failed: CAPIError: 400 ..." (#8222). OpenBot sends only the model
+ * and the effort, so the user's action is another model.
+ */
+function copilotTurnFailure(_error: unknown, detail: string): string {
+  return /"thinking\.type\.enabled" is not supported for this model/u.test(detail)
+    ? sourceText("error.provider.copilotThinkingRejected")
+    : detail;
+}
 
 /**
  * A turn that ended as done with no answer text and no tool call fails, also when it sent its
@@ -344,6 +409,15 @@ export const GROK_ACP_FLAVOR: AcpFlavor = {
   // The chat then showed no answer and no error (#6529).
   emptyAnswerFailure: noAnswerUnlessPlanOrCompaction,
   mcpServerFailure: grokMcpServerFailure,
+  mcpServerName: grokMcpServerName,
+  // Grok CLI 1.0.77 keeps a session in a folder named by its working directory. A resume of a session
+  // that is not in the folder of the workspace, such as after the workspace moved, fails with "Path
+  // not found." and `data.code` `FS_NOT_FOUND`, which Grok also sends for any other missing file. The
+  // agent then failed each message (#8936). Only a `session/list` without the session replaces it.
+  restoreFailure: (error) =>
+    error instanceof RequestError && error.code === -32603 && isRecord(error.data) && error.data.code === "FS_NOT_FOUND"
+      ? "confirm-missing"
+      : null,
   // Grok CLI 1.0.77 reads the reply of `ask_user_question` as an enum with the tag `outcome`, and
   // fails the tool on a reply without it. `accepted` has the answers by question text, each a text
   // or a list of texts, and `annotations`. `cancelled` tells the model that the user did not answer.
@@ -381,9 +455,24 @@ const HERMES_LOST_TURNS: NonNullable<AcpFlavor["lostTurns"]> = {
  * before the error. The chat showed "Internal error: admitted_turn_failed" (#6395).
  */
 function hermesTurnFailure(error: unknown, detail: string): string {
-  return isRecord(error) && isRecord(error.data) && error.data.details === "admitted_turn_failed"
-    ? sourceText("error.provider.hermesTurnFailed")
-    : detail;
+  if (isRecord(error) && isRecord(error.data) && error.data.details === "admitted_turn_failed")
+    return sourceText("error.provider.hermesTurnFailed");
+  return hermesRefusal(error) ? sourceText("error.provider.hermesRefused") : detail;
+}
+
+/**
+ * Hermes Agent 0.23.1 fails a prompt that its gateway refuses with an internal error and only
+ * `invalid_params` in `data.details`. It keeps the refused field in its own `gateway.log`. The
+ * chat showed "Internal error: invalid_params" on each message to each agent for a day, until
+ * OpenBot started again (#9718).
+ */
+function hermesRefusal(error: unknown): boolean {
+  return (
+    error instanceof RequestError &&
+    error.code === -32603 &&
+    isRecord(error.data) &&
+    error.data.details === "invalid_params"
+  );
 }
 
 /**
@@ -407,6 +496,10 @@ export const HERMES_ACP_FLAVOR: AcpFlavor = {
   loadInsteadOfResume: { missing: (response) => response.modes == null },
   sessionNotFound: hermesSessionNotFound,
   lostTurns: HERMES_LOST_TURNS,
+  refusesUntilRestart: hermesRefusal,
+  // Hermes Agent sends each set to its gateway, which reads the full session for it. A set before
+  // each turn failed every turn when the gateway was slow (#9738).
+  setsConfigOnlyOnChange: true,
   // Hermes Agent 0.23.0 streams the answer, and then sends all of it again when a plugin rewrote it
   // (`transform_llm_output`). The rewrite has the streamed message's ID, so the answer showed two
   // times in one message (#6433).
@@ -461,10 +554,16 @@ export const KIMI_ACP_FLAVOR: AcpFlavor = {
     error.data.details.includes("config.toml"),
   // Its `Agent` call is titled `Agent: <description>`, and its arguments come as content text.
   subagentTools: ["Agent"],
+  // Kimi CLI 1.52.0 refuses a new session with `authRequired` when it has no token, or an expired
+  // one with no refresh token. A chat then showed "RequestError: Authentication required" (#8555).
+  authRequiredSignsOut: true,
   // Kimi CLI 1.52.0 stops reading a turn at `StepInterrupted`, so a model step that fails ends the
   // prompt as `end_turn`, and the step's error is lost. The chat then showed no answer and no error
   // (#6722). Kimi's thinking alone is not an answer.
   emptyAnswerFailure: noAnswerUnlessPlanOrCompaction,
+  // Kimi Code 2.6.0 gives a server added to a resumed session only as a `<tools_added>` note. The
+  // agent knew the Tavily tools and could not call them (#8931).
+  mcpToolsFixedAtStart: true,
 };
 
 /**
@@ -533,14 +632,20 @@ const CUSTOM_AGENT_FLAVORS: Readonly<Partial<Record<string, AcpFlavor>>> = {
   omp: OMP_ACP_FLAVOR,
   // Hermes Agent added as a custom agent (`hermes acp`) keeps the custom rules. Its missing session
   // is found, its lost turns are discarded, its answer sent again replaces the streamed one, and its
-  // failed turn is explained, as for the Hermes provider.
+  // failed turn is explained, a process that starts to refuse each prompt ends, and an unchanged
+  // model or effort is not sent again, as for the Hermes provider (#9718, #9738).
   hermes: {
     ...CUSTOM_ACP_FLAVOR,
     sessionNotFound: (error, sessionId) => hermesSessionNotFound(error) ?? ompSessionNotFound(error, sessionId),
     lostTurns: HERMES_LOST_TURNS,
+    refusesUntilRestart: hermesRefusal,
+    setsConfigOnlyOnChange: true,
     resendsAnswer: true,
     turnFailure: hermesTurnFailure,
   },
+  // Kimi Code added as a custom agent (`kimi acp`) keeps the custom rules and the tools of its first
+  // turn, as for the Kimi provider (#8931).
+  kimi: { ...CUSTOM_ACP_FLAVOR, mcpToolsFixedAtStart: true },
 };
 
 /**

@@ -109,6 +109,8 @@ export type AgentEvent =
   | { type: "browser-profiles-changed" }
   /** A Library folder of this server, or the folder of one of its files, changed. Views read the folders again. */
   | { type: "library-folders-changed" }
+  /** Whether a provider account of this server works on credits changed. Views read the usage again. */
+  | { type: "usage-credits-changed" }
   | { type: "agent-session-settings-changed"; agentId: string }
   /** A pin of a chat of the agent changed. Views read the list of pins again. */
   | { type: "message-pins-changed"; agentId: string }
@@ -205,6 +207,13 @@ export type AgentEvent =
       threadId: string;
       turnId: string;
       questions: AgentPromptQuestion[];
+      /**
+       * The card stays after its turn ends. Either no turn waits for this question (the provider could
+       * not wait longer, and the answer starts a new turn), or a Codex subagent asked it and still
+       * waits after its parent's turn. A client sees it in the runtime snapshot's `pendingPrompts`.
+       * Local only: the released Team API adapters do not carry it.
+       */
+      detached?: true;
     }
   | {
       type: "agent-input-resolved";
@@ -298,6 +307,7 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
     case "vault-changed":
     case "browser-profiles-changed":
     case "library-folders-changed":
+    case "usage-credits-changed":
       return true;
     case "channel-memories-changed":
     case "channel-routines-changed":
@@ -411,7 +421,8 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
         isString(value.turnId) &&
         Array.isArray(value.questions) &&
         value.questions.length <= INPUT_LIMITS.promptQuestions &&
-        value.questions.every(isAgentPromptQuestion)
+        value.questions.every(isAgentPromptQuestion) &&
+        (value.detached === undefined || value.detached === true)
       );
     case "agent-input-resolved":
       return (
