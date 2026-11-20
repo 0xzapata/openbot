@@ -149,7 +149,7 @@ export const messages = {
   "billing.order.currency": "מטבע",
   "billing.order.monthly": "חודשי",
   "billing.order.yearly": "שנתי",
-  "billing.order.yearlySaving": "−{percent}% בחיוב שנתי",
+  "billing.order.yearlySaving": "הנחה של {percent}% בחיוב שנתי",
   "billing.order.server.title": "שרת מאוחסן",
   "billing.order.server.summary": "אנחנו מפעילים את OpenBot עבור הצוות שלך.",
   "billing.order.server.none": "ללא שרת",
@@ -167,7 +167,7 @@ export const messages = {
   "billing.order.license.noneDetail": "שימוש אישי ולא מסחרי",
   "billing.order.license.starter": "רישיון Starter",
   "billing.order.license.team": "רישיון Team",
-  "billing.order.license.bundleSaving": "−{percent}% עם השרת שלך",
+  "billing.order.license.bundleSaving": "הנחה של {percent}% עם השרת שלך",
   "billing.order.license.teamDetail": "{included} כלולים, +{price} לכל נוסף",
   "billing.order.license.serverMembers": {
     one: "בשרת שלך יש חבר אחד",
@@ -215,4 +215,10 @@ export const messages = {
     other:
       "ברישיון שלך יש {count} משתמשים, המקסימום. יש ליצור קשר לקבלת רישיון גדול יותר. אנשים חדשים לא יוכלו להצטרף לשרתים שלך.",
   },
+  "billing.details.country": "מדינת החיוב",
+  "billing.details.countryPlaceholder": "בחירת מדינה",
+  "billing.details.vatId": "מספר מע״מ באיחוד האירופי (לא חובה)",
+  "billing.details.vatIdInvalid": "זה לא מספר מע״מ של המדינה שנבחרה.",
+  "billing.details.countryMissing": "יש לבחור את מדינת החיוב.",
+  "billing.details.saveFailed": "לא ניתן לשמור את פרטי החיוב",
 } as const satisfies PartialTranslation<typeof source>;
