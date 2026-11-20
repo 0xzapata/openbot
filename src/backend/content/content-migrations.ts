@@ -9,6 +9,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { isDynamicRecord, isNumber } from "@openbot/contracts/runtime-values";
 import { createOpenBotLogger, toLogValue } from "@openbot/logging";
+import { withTransaction } from "../database/sqlite-transaction";
 import { CONTENT_SCHEMA_SQL } from "./content-schema";
 
 const logger = createOpenBotLogger("content-migrations");
@@ -87,8 +88,7 @@ export function migrateContentSchema(db: DatabaseSync, appliedAt = new Date().to
 }
 
 function runMigration(db: DatabaseSync, migration: ContentMigration, appliedAt: string): void {
-  db.exec("BEGIN IMMEDIATE");
-  try {
+  withTransaction(db, () => {
     migration.up(db);
     db.prepare("INSERT INTO content_schema_migrations(version, applied_at) VALUES (?, ?)").run(
       migration.version,
@@ -98,11 +98,7 @@ function runMigration(db: DatabaseSync, migration: ContentMigration, appliedAt: 
       if (db.prepare(`PRAGMA foreign_key_check(${table})`).all().length > 0)
         throw new Error(`OpenBot content migration produced foreign-key violations in ${table}.`);
     }
-    db.exec("COMMIT");
-  } catch (error) {
-    if (db.isTransaction) db.exec("ROLLBACK");
-    throw error;
-  }
+  });
 }
 
 function addVariantUrl(db: DatabaseSync): void {
