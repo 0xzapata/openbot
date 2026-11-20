@@ -131,9 +131,6 @@ export const messages = defineMessages("content", {
   // Empty states
   "content.empty.title": "No posts yet",
   "content.empty.body": "Write a post, or ask an agent to draft one. You approve each post before it goes out.",
-  "content.empty.noAccounts.title": "Connect a network first",
-  "content.empty.noAccounts.body": "OpenBot posts with your own accounts. Sign-in stays on this computer.",
-  "content.empty.noAccounts.action": "Connect accounts",
 
   // Calendar
   "content.calendar.loading": "Loading the calendar",
@@ -194,6 +191,7 @@ export const messages = defineMessages("content", {
   "content.composer.blocked.needsImage": "Add an image for Instagram, or turn Instagram off.",
   "content.composer.blocked.noTitle": "Add a title for YouTube.",
   "content.composer.blocked.pastTime": "Pick a time in the future.",
+  "content.composer.blocked.needsSetup": "Set up {network} first, or schedule the post for later.",
 
   // Gates (composer and accounts)
   "content.gate.meta": "Waits for Meta app review",

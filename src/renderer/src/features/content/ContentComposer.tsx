@@ -62,7 +62,8 @@ type BlockReason =
   | { kind: "overLimit"; platform: ContentPlatform }
   | { kind: "needsImage" }
   | { kind: "noTitle" }
-  | { kind: "pastTime" };
+  | { kind: "pastTime" }
+  | { kind: "needsSetup"; platform: ContentPlatform };
 
 const HOUR_MINUTE = new Map<string, Intl.DateTimeFormat>();
 /** "HH:mm" of an instant in a zone. A key, not display text, so the locale is fixed. */
@@ -104,16 +105,15 @@ function formFor(
   zone: string,
   startAt: string | null,
 ): ComposerForm {
-  const usable = new Set(
-    networks.flatMap((network) =>
-      network.available && network.account && network.account.status !== "revoked" ? [network.platform] : [],
-    ),
-  );
+  const available = networks.filter((network) => network.available);
+  const connected = available.filter((network) => network.account && network.account.status !== "revoked");
+  // Setup is optional: with no connected network, a new post starts on every available one.
+  const usable = new Set((connected.length > 0 ? connected : available).map((network) => network.platform));
   const at = post?.scheduledFor ? new Date(post.scheduledFor) : startAt ? new Date(startAt) : null;
   const network = (platform: ContentPlatform): ComposerNetwork => {
     const own = post?.variants.find((item) => item.platform === platform);
     return {
-      // A new post starts on every network the user can post to that needs no file.
+      // A new post starts on every usable network that needs no file.
       chosen: post ? own?.status !== "skipped" : usable.has(platform) && !CONTENT_PLATFORMS[platform].mediaRequired,
       ownText: own?.body ?? null,
       title: own?.title ?? "",
@@ -247,6 +247,9 @@ export function ContentComposer(props: ContentComposerProps) {
     if (list.some(({ row }) => row.issues.includes("needsImage"))) return { kind: "needsImage" };
     if (list.some(({ row }) => row.issues.includes("noTitle"))) return { kind: "noTitle" };
     if (form.when === "later" && Date.parse(scheduledFor()) <= Date.now()) return { kind: "pastTime" };
+    // A draft or a scheduled post can wait for the setup; Publish now would fail on that network at once.
+    const unready = form.when === "now" ? list.find(({ row }) => row.setup !== null) : undefined;
+    if (unready) return { kind: "needsSetup", platform: unready.network.platform };
     return null;
   });
   /** The reason of the last refused action while it holds; else the reason the main action is blocked. */
@@ -267,6 +270,8 @@ export function ContentComposer(props: ContentComposerProps) {
         return t("content.composer.blocked.noTitle");
       case "pastTime":
         return t("content.composer.blocked.pastTime");
+      case "needsSetup":
+        return t("content.composer.blocked.needsSetup", { network: CONTENT_NETWORK_NAMES[reason.platform] });
     }
   };
 
@@ -286,6 +291,7 @@ export function ContentComposer(props: ContentComposerProps) {
       needsImage: () => find(".content-media button"),
       noTitle: () => find("#content-title-youtube"),
       pastTime: () => find(".content-composer-when .routine-chip"),
+      needsSetup: () => find(`#content-setup-${reason.kind === "needsSetup" ? reason.platform : ""}`),
     }[reason.kind]();
     target?.focus();
   }
@@ -939,16 +945,18 @@ function ComposerNetworkRow(props: ComposerNetworkRowProps) {
     switch (props.row.block) {
       case "unavailable":
         return t(contentGateKey(platform()));
-      case "notConnected":
-        return t("content.composer.notConnected");
-      case "needsHost":
-        return t("content.network.needsHost");
       case "needsVideo":
         return t("content.composer.needsVideo");
       case "imagesOnly":
         return t("content.composer.imagesOnly");
     }
     if (props.state.chosen && props.row.issues.includes("needsImage")) return t("content.composer.needsImage");
+    switch (props.row.setup) {
+      case "notConnected":
+        return t("content.composer.notConnected");
+      case "needsHost":
+        return t("content.network.needsHost");
+    }
     return props.network.account?.displayName ?? props.network.account?.handle ?? "";
   };
   const danger = () => props.state.chosen && props.row.issues.includes("needsImage");
@@ -976,16 +984,13 @@ function ComposerNetworkRow(props: ComposerNetworkRowProps) {
             {note()}
           </small>
         </span>
-        <Show when={props.row.block === "notConnected"}>
-          <Button variant="outline" size="xs" onClick={() => props.onConnect()}>
-            {t("content.composer.connect")}
-          </Button>
-        </Show>
-        {/* Instagram is the only network with this block: the dialog opens on its image host fields. */}
-        <Show when={props.row.block === "needsHost"}>
-          <Button variant="outline" size="xs" onClick={() => props.onConnect()}>
-            {t("content.action.setUpHost")}
-          </Button>
+        {/* Optional setup: the network can be chosen first. Instagram is the only one that needs a host. */}
+        <Show when={props.row.setup}>
+          {(setup) => (
+            <Button id={`content-setup-${platform()}`} variant="outline" size="xs" onClick={() => props.onConnect()}>
+              {setup() === "notConnected" ? t("content.composer.connect") : t("content.action.setUpHost")}
+            </Button>
+          )}
         </Show>
         <Show when={props.row.block === "unavailable"}>
           <Badge variant="outline">{t("content.composer.unavailable")}</Badge>

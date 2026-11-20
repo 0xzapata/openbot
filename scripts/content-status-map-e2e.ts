@@ -344,13 +344,18 @@ try {
         media: options.media ?? null,
       });
     assert.equal(row("instagram", { available: false }).block, "unavailable");
-    assert.equal(row("x", { account: null }).block, "notConnected");
-    assert.equal(row("x", { account: "revoked" }).block, "notConnected");
-    // G13: Instagram with no image host is blocked after the account check; no other network is.
-    assert.equal(row("instagram", { host: false, media: "image" }).block, "needsHost");
-    assert.equal(row("instagram", { host: false, account: null }).block, "notConnected");
-    assert.equal(row("instagram", { host: false, chosen: false }).block, "needsHost");
-    assert.equal(row("threads", { host: false, media: "image" }).block, null);
+    assert.equal(row("instagram", { available: false, account: null }).setup, null);
+    // Setup is optional: a network with no account, or Instagram with no image host, can still be chosen.
+    assert.deepEqual([row("x", { account: null }).block, row("x", { account: null }).setup], [null, "notConnected"]);
+    assert.equal(row("x", { account: "revoked" }).setup, "notConnected");
+    // G13: Instagram with no image host needs it after the account; no other network does.
+    const noHost = row("instagram", { host: false, media: "image" });
+    assert.deepEqual([noHost.block, noHost.setup, noHost.issues], [null, "needsHost", []]);
+    assert.equal(row("instagram", { host: false, account: null }).setup, "notConnected");
+    assert.equal(row("instagram", { host: false, chosen: false }).setup, "needsHost");
+    assert.equal(row("threads", { host: false, media: "image" }).setup, null);
+    // A file rule still blocks a network that is not set up.
+    assert.equal(row("youtube", { account: null, media: "image" }).block, "needsVideo");
     // A signed-out account can still be chosen: the queue shows the banner, and publish fails until sign-in.
     assert.equal(row("x", { account: "expired" }).block, null);
     assert.equal(row("youtube", { media: "image" }).block, "needsVideo");

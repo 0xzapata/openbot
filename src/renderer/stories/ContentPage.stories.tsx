@@ -32,7 +32,11 @@ export const Queue: Story = {};
 
 export const QueueEmpty: Story = { args: { options: { api: emptyContent } } };
 
+/** Network setup is optional: with no account, the queue still offers New post. */
 export const QueueNoAccounts: Story = { args: { options: { api: noAccountsContent } } };
+
+/** No account: X and LinkedIn can still be chosen, each with Connect in its row. */
+export const ComposerNoAccounts: Story = { args: { options: { api: noAccountsContent, composer: "new" } } };
 
 export const QueueLoading: Story = { args: { options: { api: loadingContent } } };
 
