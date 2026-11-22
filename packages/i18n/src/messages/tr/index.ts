@@ -15,6 +15,7 @@ import { messages as computerUse } from "./computerUse";
 import { messages as connector } from "./connector";
 import { messages as content } from "./content";
 import { messages as conversation } from "./conversation";
+import { messages as crm } from "./crm";
 import { messages as customProvider } from "./customProvider";
 import { messages as diagram } from "./diagram";
 import { messages as dialog } from "./dialog";
@@ -53,11 +54,6 @@ import { messages as webClient } from "./webClient";
 import { messages as window } from "./window";
 import { messages as workflow } from "./workflow";
 
-/**
- * Turkish. Written from the English source: a key that is missing here renders its English source.
- *
- * This is the desktop catalog: shared keys, source text, and every desktop area.
- */
 export const tr = {
   ...shared,
   ...source,
@@ -111,4 +107,5 @@ export const tr = {
   ...vault,
   ...uiBlock,
   ...sitePage,
+  ...crm,
 } as const satisfies PartialTranslation<AppMessages>;

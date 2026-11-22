@@ -23,6 +23,13 @@ export const messages = {
   "settings.codeFont.title": "Code-Schrift",
   "settings.codeFont.description": "Die Schrift von Code, Terminals und Dateipfaden.",
   "settings.codeFont.default": "Standard",
+  "settings.motion.title": "Bewegung",
+  "settings.backgroundBlur.title": "Hintergrundunschärfe",
+  "settings.backgroundBlur.description":
+    "Unschärfe hinter Menüs und Dialogen. Auf einem Computer ohne GPU ist sie anfangs aus.",
+  "settings.movingFaces.title": "Bewegte Agentengesichter",
+  "settings.movingFaces.description":
+    "Agentengesichter blinzeln und bewegen sich. Auf einem Computer ohne GPU sind sie anfangs still.",
   "settings.logoColor.title": "Logofarbe",
   "settings.logoColor.description": "Im Dock, in der Taskleiste und in Dynamic Island.",
   "settings.logoColor.buildNote":
@@ -43,6 +50,19 @@ export const messages = {
   "settings.chatBackground.light": "Chathintergrund im Design Hell",
   "settings.chatBackground.dark": "Chathintergrund im Design Dunkel",
   "settings.chatBackground.default": "Standard",
+  "settings.chatBackdrop.title": "Fensterhintergrund",
+  "settings.chatBackdrop.description":
+    "Eine Szene, ein Bild oder ein GIF hinter dem ganzen Fenster auf diesem Gerät. Bitte einen Agenten um eine Szene und wähle dann bei seiner Antwort „Als Fensterhintergrund verwenden“.",
+  "settings.chatBackdrop.none": "Keiner",
+  "settings.chatBackdrop.pond": "Koi-Teich",
+  "settings.chatBackdrop.jellyfish": "Quallen",
+  "settings.chatBackdrop.sunset": "Retro-Sonnenuntergang",
+  "settings.chatBackdrop.snowfall": "Schneefall",
+  "settings.chatBackdrop.fireflies": "Glühwürmchen",
+  "settings.chatBackdrop.upload": "Bild hochladen…",
+  "settings.chatBackdrop.uploadRefused": "Verwende ein PNG-, JPEG-, GIF-, WebP- oder AVIF-Bild mit höchstens 20 MB.",
+  "settings.chatBackdrop.saveFailed": "Der Fensterhintergrund wurde nicht gespeichert.",
+  "settings.chatBackdrop.removeFailed": "Der Fensterhintergrund wurde nicht entfernt.",
   "settings.chatColor.title": "Chatfarbe",
   "settings.chatColor.description":
     "Färbt die Blasen deiner Nachrichten ein. Personen auf deinen Servern sehen sie auch.",
@@ -106,7 +126,7 @@ export const messages = {
   "settings.sendShortcut.title": "Tastenkürzel zum Senden",
   "settings.sendShortcut.description": "Wähle die Tasten zum Senden auf diesem Gerät und in diesem Browser.",
   "settings.chatOrder.description":
-    "Wähle, wo die Seitenleiste ungelesene Chats auf diesem Gerät zeigt. „Manuell“ schaltet die Gruppe „Ungelesen“ aus.",
+    "Wähle, wie die Seitenleiste Chats auf diesem Gerät sortiert. „Manuell“ und „Letzte Aktivität“ schalten die Gruppe „Ungelesen“ aus.",
   "settings.sendShortcut.enter": "Mit Enter senden",
   "settings.sendShortcut.modEnterMac": "Mit ⌘Enter senden",
   "settings.sendShortcut.modEnterWin": "Mit Strg+Enter senden",
@@ -459,7 +479,6 @@ export const messages = {
   "settings.profile.share.copyFailed": "Das Bild konnte nicht kopiert werden.",
   "settings.profile.share.createFailed": "Das Bild konnte nicht erstellt werden.",
   "settings.profile.share.fileName": "openbot-activity.png",
-  // The text in the image to share.
   "settings.profile.share.caption": "Meine letzten sechs Monate mit OpenBot",
   "settings.profile.activity.title": "Aktivität auf diesem Computer",
   "settings.profile.activity.activeDays": {
@@ -469,7 +488,6 @@ export const messages = {
   "settings.profile.activity.empty": "Noch keine Aktivität",
   "settings.profile.activity.loading": "Aktivität wird geladen…",
   "settings.profile.activity.loadFailed": "Deine Aktivität konnte nicht geladen werden.",
-  // {tokens} is a short number, such as 1.2M.
   "settings.profile.activity.heatmapLabel": {
     one: "{tokens} Tokens an {count} aktiven Tag im letzten Jahr",
     other: "{tokens} Tokens an {count} aktiven Tagen im letzten Jahr",
@@ -598,6 +616,7 @@ export const messages = {
   "settings.hostedServers.state.planEnded": "Tarif abgelaufen",
   "settings.hostedServers.state.creating": "Wird erstellt",
   "settings.hostedServers.state.starting": "Wird gestartet",
+  "settings.hostedServers.state.restoring": "Wiederherstellung",
   "settings.hostedServers.state.running": "Läuft",
   "settings.hostedServers.state.stopping": "Wird gestoppt",
   "settings.hostedServers.state.stopped": "Gestoppt",
@@ -608,6 +627,8 @@ export const messages = {
   "settings.hostedServers.paymentDescription": "Die Einrichtung beginnt, sobald Stripe die Zahlung bestätigt.",
   "settings.hostedServers.planEndedDescription":
     "Der Tarif ist abgelaufen, daher wurde der Server gestoppt. Seine Daten bleiben erhalten. Verlängere den Tarif, um ihn zu starten.",
+  "settings.hostedServers.planEndedKeptUntil":
+    "Der Tarif ist abgelaufen, daher wurde der Server gestoppt. Seine Daten bleiben bis zum {date} erhalten. Verlängere den Tarif vorher, um ihn zu starten.",
   "settings.hostedServers.pay": "Zahlungsseite öffnen",
   "settings.hostedServers.payLabel": "Zahlungsseite für {name} öffnen",
   "settings.hostedServers.renew": "Tarif verlängern",
@@ -653,7 +674,6 @@ export const messages = {
   "settings.hostedServers.plan.standard.summary": "Für ein kleines Team mit täglichen Routinen.",
   "settings.hostedServers.plan.pro.name": "Pro",
   "settings.hostedServers.plan.pro.summary": "Für viele Agenten und intensive Browserarbeit.",
-  // The Voice tab: dictation models and the dictation language.
   "settings.voice.dictation.section": "Diktieren",
   "settings.voice.model.parakeet.description":
     "Schnell. Erkennt die gesprochene Sprache selbst, in 25 europäischen Sprachen.",
@@ -683,6 +703,10 @@ export const messages = {
   "settings.voice.language.parakeetUnifiedEnglishOnly":
     "Parakeet Unified erkennt nur Englisch. Um eine Sprache festzulegen, verwende Whisper, Cohere oder ElevenLabs.",
   "settings.voice.language.automatic": "Automatisch",
+  "settings.voice.pause.title": "Pause vor dem Senden",
+  "settings.voice.pause.description":
+    "In einem Sprachgespräch sendet OpenBot deine Worte, wenn du so lange nicht sprichst. Wähle eine längere Pause, wenn du langsam sprichst oder zum Nachdenken innehältst. Codex-Live-Sprache erkennt das Ende selbst.",
+  "settings.voice.pause.seconds": "{seconds} s",
   "settings.voice.loadFailed": "Die Sprachmodelle konnten nicht gelesen werden.",
   "settings.voice.saveFailed": "Die Spracheinstellung konnte nicht gespeichert werden. Versuche es erneut.",
   "settings.voice.downloadFailed": "Der Download konnte nicht starten. Versuche es erneut.",
@@ -718,6 +742,13 @@ export const messages = {
   "settings.voice.speech.sample": "Hallo. So klingen deine Antworten.",
   "settings.voice.speech.listenFailed": "Die Probe konnte nicht abgespielt werden.",
   "settings.voice.live.section": "Live-Sprache",
+  "settings.voice.talk.section": "Sprachgespräch",
+  "settings.voice.talkKey.title": "Push-to-Talk-Taste",
+  "settings.voice.talkKey.description": "Halte diese Tasten gedrückt, um in einem Sprachgespräch zu sprechen.",
+  "settings.voice.talkKey.change": "Push-to-Talk-Taste ändern",
+  "settings.voice.talkKey.recording": "Drücke die Tasten",
+  "settings.voice.talkKey.refused": "Füge noch eine Taste hinzu",
+  "settings.voice.talkKey.reset": "Zurücksetzen",
   "settings.voice.live.signIn": "Melde dich mit deinem ChatGPT-Konto bei Codex an, um Live-Sprache zu nutzen.",
   "settings.transfer.title": "Diesen Server auf einen anderen Computer umziehen",
   "settings.transfer.lede":
@@ -777,6 +808,13 @@ export const messages = {
   "settings.transfer.import.lede": "Wähle die Datei, die du vom anderen Server exportiert hast. Sie endet auf .zip.",
   "settings.transfer.import.choose": "Datei wählen…",
   "settings.transfer.import.reading": "Datei wird gelesen…",
+  "settings.transfer.upload.label": "Upload zum Server",
+  "settings.transfer.upload.sending": "Datei wird gesendet…",
+  "settings.transfer.upload.sent": "{sent} von {total} gesendet",
+  "settings.transfer.upload.serverReading": "Server liest die Datei…",
+  "settings.transfer.upload.etaSoon": "Weniger als eine Minute übrig",
+  "settings.transfer.upload.etaMinutes": "Noch etwa {minutes} Min.",
+  "settings.transfer.upload.etaHours": "Noch etwa {hours} Std. {minutes} Min.",
   "settings.transfer.import.openFailed": "Die Datei konnte nicht geöffnet werden",
   "settings.transfer.import.contains": "Diese Datei enthält",
   "settings.transfer.import.source": "OpenBot {version} · exportiert am {date}",
@@ -820,8 +858,12 @@ export const messages = {
   "settings.transfer.copy.noAgents": "Dieser Server hat keine Agenten.",
   "settings.transfer.copy.new": "Neu",
   "settings.transfer.copy.notCopied":
-    "Ihre Kanäle und der gemeinsame Ordner werden ebenfalls kopiert. API-Schlüssel, Anmeldungen, Connectors und der Chatverlauf werden nicht kopiert. Richte sie auf dem anderen Server neu ein.",
+    "Ihre Kanäle, Routinenabläufe, Workflows und der gemeinsame Ordner werden ebenfalls kopiert. API-Schlüssel, Anmeldungen, Connectors und der Chatverlauf werden nicht kopiert. Richte sie auf dem anderen Server neu ein.",
   "settings.transfer.copy.submit": { one: "{count} Agenten kopieren", other: "{count} Agenten kopieren" },
+  "settings.transfer.copy.duplicatesTitle": "Doppelte Agenten kopieren?",
+  "settings.transfer.copy.duplicatesDescription":
+    "{server} hat bereits Agenten mit diesen Namen: {names}. Die Kopie fügt jeweils einen zweiten Agenten hinzu. Jede Kopie ist ein eigener Agent mit eigenen Chats, Dateien und Erinnerungen.",
+  "settings.transfer.copy.duplicatesConfirm": "Duplikate kopieren",
   "settings.transfer.copy.copying": "Wird kopiert…",
   "settings.transfer.copy.done": {
     one: "{count} Agent auf {server} kopiert.",
